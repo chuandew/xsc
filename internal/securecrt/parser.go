@@ -1,0 +1,340 @@
+// Package securecrt provides functionality to parse and decrypt SecureCRT session files
+package securecrt
+
+import (
+	"bufio"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+// Session represents a SecureCRT session
+type Session struct {
+	Name              string
+	Hostname          string
+	Port              int
+	Username          string
+	Password          string // 解密后的密码（延迟解密时为空）
+	EncryptedPassword string // 原始加密密码（用于延迟解密）
+	Protocol          string
+	Emulation         string
+	FilePath          string
+	Folder            string
+}
+
+// Config represents SecureCRT configuration
+type Config struct {
+	SessionPath string
+	Password    string // Master password for decryption
+}
+
+// LoadSessions loads all SecureCRT sessions from the given path
+func LoadSessions(config Config) ([]*Session, error) {
+	if _, err := os.Stat(config.SessionPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("SecureCRT session path does not exist: %s", config.SessionPath)
+	}
+
+	var sessions []*Session
+
+	err := filepath.Walk(config.SessionPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// SecureCRT sessions are .ini files
+		if !info.IsDir() && strings.HasSuffix(info.Name(), ".ini") {
+			// Skip __FolderData__.ini files
+			if info.Name() == "__FolderData__.ini" || info.Name() == "Default.ini" {
+				return nil
+			}
+			session, err := parseSessionFile(path, config.SessionPath, config.Password)
+			if err != nil {
+				return nil
+			}
+			// 只添加有 hostname 的 session
+			if session.Hostname != "" {
+				sessions = append(sessions, session)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return sessions, nil
+}
+
+// parseSessionFile parses a single SecureCRT session file
+func parseSessionFile(filePath, basePath, masterPassword string) (*Session, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	session := &Session{
+		FilePath: filePath,
+		Port:     22,
+		Protocol: "SSH2",
+	}
+
+	// Get folder path relative to base path
+	relPath, _ := filepath.Rel(basePath, filepath.Dir(filePath))
+	if relPath != "." {
+		session.Folder = relPath
+	}
+
+	// Get session name from filename (without .ini extension)
+	baseName := filepath.Base(filePath)
+	session.Name = strings.TrimSuffix(baseName, ".ini")
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, ";") {
+			continue
+		}
+
+		// Parse key=value pairs (SecureCRT uses format like S:"Hostname"=value)
+		if idx := strings.Index(line, "="); idx > 0 {
+			rawKey := strings.TrimSpace(line[:idx])
+			value := strings.TrimSpace(line[idx+1:])
+
+			// 保留原始 key 用于特殊匹配
+			key := cleanKey(rawKey)
+
+			switch key {
+			case "hostname":
+				session.Hostname = value
+			case "[ssh2] port":
+				// SecureCRT 使用 D:"[SSH2] Port"=00000016 格式（十六进制）
+				if port, err := strconv.ParseInt(value, 16, 32); err == nil && port > 0 {
+					session.Port = int(port)
+				}
+			case "username":
+				session.Username = value
+			case "password v2":
+				// V2 密码格式: "02:hex..." 或 "03:hex..."
+				// 只保存加密密码，延迟到连接时解密
+				if value != "" {
+					session.EncryptedPassword = value
+				}
+			case "password":
+				// V1 密码格式（旧版本 SecureCRT < 7.3.3）
+				if session.EncryptedPassword == "" && value != "" {
+					session.EncryptedPassword = value
+				}
+			case "protocol name":
+				session.Protocol = value
+			case "emulation":
+				session.Emulation = value
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return session, nil
+}
+
+// cleanKey removes type prefix and quotes from SecureCRT key names
+// e.g., S:"Hostname" -> hostname, D:"[SSH2] Port" -> [ssh2] port
+func cleanKey(key string) string {
+	key = strings.TrimSpace(key)
+
+	// Remove type prefix (S:, D:, B:, etc.)
+	if idx := strings.Index(key, ":"); idx > 0 && idx < 3 {
+		key = key[idx+1:]
+	}
+
+	// Remove quotes
+	key = strings.Trim(key, "\"")
+
+	return strings.ToLower(key)
+}
+
+// decryptPasswordV2 decrypts a SecureCRT V2 encrypted password
+// Format: "prefix:hex_data" where prefix is "02" or "03"
+func decryptPasswordV2(encryptedStr, passphrase string) (string, error) {
+	// 分离 prefix 和密文
+	parts := strings.SplitN(encryptedStr, ":", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid password v2 format")
+	}
+
+	prefix := parts[0]
+	hexData := parts[1]
+
+	ciphertext, err := hex.DecodeString(hexData)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode hex: %w", err)
+	}
+
+	var plaintext []byte
+
+	switch prefix {
+	case "02":
+		plaintext, err = decryptV2Prefix02(ciphertext, passphrase)
+	case "03":
+		plaintext, err = decryptV2Prefix03(ciphertext, passphrase)
+	default:
+		return "", fmt.Errorf("unknown password v2 prefix: %s", prefix)
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
+}
+
+// decryptV2Prefix02 使用 SHA256(passphrase) 作为 AES-256-CBC 密钥，IV 全零
+func decryptV2Prefix02(ciphertext []byte, passphrase string) ([]byte, error) {
+	key := sha256.Sum256([]byte(passphrase))
+	iv := make([]byte, aes.BlockSize)
+
+	return decryptAESCBC(ciphertext, key[:], iv)
+}
+
+// decryptV2Prefix03 使用 bcrypt_pbkdf2 派生密钥
+// ciphertext 前 16 字节是 salt，剩余是 AES-256-CBC 加密数据
+func decryptV2Prefix03(ciphertext []byte, passphrase string) ([]byte, error) {
+	if len(ciphertext) < 16 {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+
+	salt := ciphertext[:16]
+	encrypted := ciphertext[16:]
+
+	// bcrypt_pbkdf2 派生 32 字节密钥 + 16 字节 IV = 48 字节
+	kdfBytes, err := bcryptPbkdfKey([]byte(passphrase), salt, 16, 32+aes.BlockSize)
+	if err != nil {
+		return nil, fmt.Errorf("bcrypt_pbkdf2 failed: %w", err)
+	}
+
+	aesKey := kdfBytes[:32]
+	iv := kdfBytes[32 : 32+aes.BlockSize]
+
+	return decryptAESCBC(encrypted, aesKey, iv)
+}
+
+// decryptAESCBC 解密 AES-CBC 数据并验证 LVC 格式
+// 解密后格式: [4字节小端长度][明文][32字节SHA256校验][填充]
+func decryptAESCBC(ciphertext, key, iv []byte) ([]byte, error) {
+	if len(ciphertext)%aes.BlockSize != 0 {
+		return nil, fmt.Errorf("ciphertext length not aligned to block size")
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	decryptor := cipher.NewCBCDecrypter(block, iv)
+	padded := make([]byte, len(ciphertext))
+	decryptor.CryptBlocks(padded, ciphertext)
+
+	// 解析 LVC 格式: length(4) + value(length) + checksum(32) + padding
+	if len(padded) < 4 {
+		return nil, fmt.Errorf("decrypted data too short")
+	}
+
+	plaintextLen := binary.LittleEndian.Uint32(padded[:4])
+	if int(plaintextLen) > len(padded)-4 {
+		return nil, fmt.Errorf("invalid plaintext length")
+	}
+
+	plaintext := padded[4 : 4+plaintextLen]
+
+	// 验证 SHA256 校验和
+	if int(4+plaintextLen+sha256.Size) > len(padded) {
+		return nil, fmt.Errorf("missing checksum")
+	}
+
+	checksum := padded[4+plaintextLen : 4+plaintextLen+sha256.Size]
+	expected := sha256.Sum256(plaintext)
+	for i := 0; i < sha256.Size; i++ {
+		if checksum[i] != expected[i] {
+			return nil, fmt.Errorf("checksum mismatch: wrong passphrase?")
+		}
+	}
+
+	return plaintext, nil
+}
+
+// decryptPasswordV1 decrypts a SecureCRT V1 encrypted password (pre-7.3.3)
+// 使用 Blowfish-CBC，硬编码密钥
+func decryptPasswordV1(encryptedHex string) (string, error) {
+	// V1 密码以 'u' 开头
+	if len(encryptedHex) > 0 && encryptedHex[0] == 'u' {
+		encryptedHex = encryptedHex[1:]
+	}
+
+	ciphertext, err := hex.DecodeString(encryptedHex)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode hex: %w", err)
+	}
+
+	if len(ciphertext) <= 8 {
+		return "", fmt.Errorf("ciphertext too short")
+	}
+
+	// V1 使用 Blowfish-CBC，硬编码两组密钥
+	// 这里简化处理，V1 格式在现代 SecureCRT 中很少使用
+	return "", fmt.Errorf("V1 password decryption not supported, please upgrade SecureCRT session files")
+}
+
+// DecryptPassword 解密密码（延迟解密）
+func DecryptPassword(encryptedPassword, masterPassword string) (string, error) {
+	if encryptedPassword == "" || masterPassword == "" {
+		return "", fmt.Errorf("no encrypted password or master password")
+	}
+
+	// 判断是 V2 还是 V1 格式
+	if strings.Contains(encryptedPassword, ":") {
+		return decryptPasswordV2(encryptedPassword, masterPassword)
+	}
+	return decryptPasswordV1(encryptedPassword)
+}
+
+// HasEncryptedPassword 检查是否有加密密码
+func (s *Session) HasEncryptedPassword() bool {
+	return s.EncryptedPassword != ""
+}
+
+// ConvertToXSCSession converts a SecureCRT session to xsc session format
+func (s *Session) ConvertToXSCSession() map[string]interface{} {
+	result := map[string]interface{}{
+		"host": s.Hostname,
+		"port": s.Port,
+		"user": s.Username,
+	}
+
+	if s.Password != "" {
+		result["auth_type"] = "password"
+		result["password"] = s.Password
+	} else if s.EncryptedPassword != "" {
+		// 有加密密码但尚未解密，标记为 password 认证
+		result["auth_type"] = "password"
+		result["encrypted_password"] = s.EncryptedPassword
+	} else {
+		result["auth_type"] = "agent"
+	}
+
+	return result
+}

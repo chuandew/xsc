@@ -1,0 +1,34 @@
+# Binaries
+xsc
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Build directories
+/build/
+/dist/
+/bin/
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+
+# Go vendor directory
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Session files (may contain sensitive data)
+/sessions/
