@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/user/xsc/internal/securecrt"
 	"github.com/user/xsc/internal/session"
@@ -344,10 +345,20 @@ func getSSHAgentAuth() (ssh.AuthMethod, net.Conn, error) {
 // connectInteractive 建立交互式 SSH 连接
 func connectInteractive(s *session.Session, config *ssh.ClientConfig) error {
 	addr := fmt.Sprintf("%s:%d", s.Host, s.Port)
-	client, err := ssh.Dial("tcp", addr, config)
+
+	// 设置连接超时为10秒（业界标准）
+	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
-		return fmt.Errorf("failed to dial: %w", err)
+		return fmt.Errorf("connection timeout: %w", err)
 	}
+
+	// 使用已建立的连接创建 SSH 客户端
+	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to create SSH connection: %w", err)
+	}
+	client := ssh.NewClient(c, chans, reqs)
 	defer client.Close()
 
 	sess, err := client.NewSession()

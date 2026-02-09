@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/user/xsc/internal/securecrt"
 	"github.com/user/xsc/internal/session"
 	internalssh "github.com/user/xsc/internal/ssh"
 	"github.com/user/xsc/pkg/config"
@@ -1105,12 +1106,25 @@ func (m Model) renderDetail(width, height int) string {
 			var detail string
 			switch am.Type {
 			case "password":
-				if m.showPassword && am.Password != "" {
-					detail = fmt.Sprintf(" (%s)", am.Password)
-				} else if am.EncryptedPassword != "" {
-					detail = " (encrypted)"
+				if am.EncryptedPassword != "" {
+					// 有加密密码，根据 showPassword 决定是否解密显示
+					if m.showPassword {
+						// 尝试解密并显示
+						if decrypted, err := securecrt.DecryptPassword(am.EncryptedPassword, s.MasterPassword); err == nil {
+							detail = fmt.Sprintf(" (%s)", decrypted)
+						} else {
+							detail = fmt.Sprintf(" (decrypt failed: %v)", err)
+						}
+					} else {
+						detail = " (encrypted)"
+					}
 				} else if am.Password != "" {
-					detail = " (********)"
+					// 已有明文密码
+					if m.showPassword {
+						detail = fmt.Sprintf(" (%s)", am.Password)
+					} else {
+						detail = " (********)"
+					}
 				}
 			case "key", "publickey":
 				if am.KeyPath != "" {
