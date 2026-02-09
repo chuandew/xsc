@@ -169,3 +169,105 @@ func TestStatusBarShowsPWIndicator(t *testing.T) {
 		t.Error("[PW] should appear when showPassword is true")
 	}
 }
+
+// TestMatchCommand 测试命令匹配
+func TestMatchCommand(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"q", "q"},
+		{"quit", "q"},
+		{"pw", "pw"},
+		{"password", "pw"},
+		{"noh", "noh"},
+		{"nohlsearch", "noh"},
+		{"unknown", ""},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		got := matchCommand(tt.input)
+		if got != tt.want {
+			t.Errorf("matchCommand(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestGetCommandCompletions 测试命令补全
+func TestGetCommandCompletions(t *testing.T) {
+	// 空前缀应返回所有命令
+	all := getCommandCompletions("")
+	if len(all) != len(commands) {
+		t.Errorf("getCommandCompletions(\"\") returned %d commands, want %d", len(all), len(commands))
+	}
+
+	// "p" 应匹配 pw（name 以 p 开头）
+	pMatches := getCommandCompletions("p")
+	found := false
+	for _, cmd := range pMatches {
+		if cmd.Name == "pw" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("getCommandCompletions(\"p\") should include pw")
+	}
+
+	// "q" 应匹配 q
+	qMatches := getCommandCompletions("q")
+	found = false
+	for _, cmd := range qMatches {
+		if cmd.Name == "q" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("getCommandCompletions(\"q\") should include q")
+	}
+
+	// "xyz" 应无匹配
+	noMatches := getCommandCompletions("xyz")
+	if len(noMatches) != 0 {
+		t.Errorf("getCommandCompletions(\"xyz\") returned %d commands, want 0", len(noMatches))
+	}
+}
+
+// TestTabCompletion 测试 Tab 补全功能
+func TestTabCompletion(t *testing.T) {
+	m := initialModel()
+	m.lineNumMode = true
+	m.lineNumInput.SetValue("p")
+
+	result, _ := m.handleLineNumInput(tea.KeyMsg{Type: tea.KeyTab})
+	model := result.(Model)
+
+	if model.lineNumInput.Value() != "pw" {
+		t.Errorf("Tab completion: got %q, want %q", model.lineNumInput.Value(), "pw")
+	}
+}
+
+// TestRenderHelp 测试帮助视图渲染
+func TestRenderHelp(t *testing.T) {
+	m := initialModel()
+	m.width = 120
+	m.height = 40
+
+	helpView := m.renderHelp()
+
+	// 验证包含所有章节标题
+	sections := []string{"移动", "折叠", "搜索", "会话操作", "命令 (: 模式)", "其他"}
+	for _, section := range sections {
+		if !strings.Contains(helpView, section) {
+			t.Errorf("renderHelp() should contain section %q", section)
+		}
+	}
+
+	// 验证包含关键快捷键描述
+	keys := []string{"↑/k", "gg", "Space/o", "Enter", ":q", ":pw", ":noh"}
+	for _, k := range keys {
+		if !strings.Contains(helpView, k) {
+			t.Errorf("renderHelp() should contain key %q", k)
+		}
+	}
+}

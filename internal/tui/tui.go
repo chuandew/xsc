@@ -78,7 +78,79 @@ var (
 			Background(lipgloss.Color("#282828")).
 			Foreground(lipgloss.Color("#ebdbb2")).
 			Padding(0, 1)
+
+	// 命令补全提示样式
+	cmdHintStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#665c54"))
+
+	cmdHintActiveStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#fabd2f"))
+
+	// 帮助视图样式
+	helpSectionStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#fabd2f")).
+				Bold(true)
+
+	helpKeyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#83a598")).
+			Width(16)
+
+	helpDescStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#ebdbb2"))
+
+	helpContainerStyle = lipgloss.NewStyle().
+				Padding(1, 2)
 )
+
+// Command 定义一个 : 模式下的命令
+type Command struct {
+	Name        string   // 主命令名, e.g. "q"
+	Aliases     []string // 别名, e.g. ["quit"]
+	Description string   // 中文描述
+}
+
+// commands 是所有 : 命令的注册表（单一数据源）
+var commands = []Command{
+	{Name: "q", Aliases: []string{"quit"}, Description: "退出程序"},
+	{Name: "noh", Aliases: []string{"nohlsearch"}, Description: "清除搜索高亮/过滤"},
+	{Name: "pw", Aliases: []string{"password"}, Description: "切换密码明文显示"},
+}
+
+// matchCommand 根据输入返回匹配的命令规范名，无匹配返回空字符串
+func matchCommand(input string) string {
+	for _, cmd := range commands {
+		if input == cmd.Name {
+			return cmd.Name
+		}
+		for _, alias := range cmd.Aliases {
+			if input == alias {
+				return cmd.Name
+			}
+		}
+	}
+	return ""
+}
+
+// getCommandCompletions 根据前缀返回匹配的命令列表
+func getCommandCompletions(prefix string) []Command {
+	if prefix == "" {
+		return commands
+	}
+	var result []Command
+	for _, cmd := range commands {
+		if strings.HasPrefix(cmd.Name, prefix) {
+			result = append(result, cmd)
+			continue
+		}
+		for _, alias := range cmd.Aliases {
+			if strings.HasPrefix(alias, prefix) {
+				result = append(result, cmd)
+				break
+			}
+		}
+	}
+	return result
+}
 
 // KeyMap 定义快捷键
 type KeyMap struct {
@@ -205,38 +277,9 @@ func (k KeyMap) ShortHelp() []key.Binding {
 
 // FullHelp returns keybindings for the expanded help view. It's part of the
 // help.KeyMap interface.
+// 注意：实际帮助渲染使用 renderHelp() 方法
 func (k KeyMap) FullHelp() [][]key.Binding {
-	// Vim 移动快捷键
-	vimMovements := key.NewBinding(
-		key.WithKeys(""),
-		key.WithHelp("gg/G/0/$/^", "go top/bottom/first/last/head"),
-	)
-	vimLineNum := key.NewBinding(
-		key.WithKeys(""),
-		key.WithHelp("<n>G/:<n>", "jump to line n"),
-	)
-	vimSearch := key.NewBinding(
-		key.WithKeys(""),
-		key.WithHelp("n/N", "next/prev search"),
-	)
-	vimFold := key.NewBinding(
-		key.WithKeys(""),
-		key.WithHelp("o/h/l/E/C", "toggle/close/open/expand/collapse"),
-	)
-	vimCommands := key.NewBinding(
-		key.WithKeys(""),
-		key.WithHelp(":pw", "toggle password visibility"),
-	)
-
-	return [][]key.Binding{
-		{k.Up, k.Down, k.PageUp, k.PageDown},
-		{k.HalfPageUp, k.HalfPageDown, k.GoToTop, k.GoToBottom},
-		{vimMovements, vimLineNum, vimSearch, vimFold},
-		{k.ToggleFold, k.OpenFold, k.CloseFold, k.OpenAllFolds},
-		{k.CloseAllFolds, k.Enter, k.Space, k.Search},
-		{k.Edit, k.New, k.Delete, vimCommands},
-		{k.Help, k.Quit},
-	}
+	return nil
 }
 
 // AgentKeyCache SSH Agent keys 缓存
@@ -285,8 +328,8 @@ func initialModel() Model {
 	lineNumInput := textinput.New()
 	lineNumInput.Placeholder = ""
 	lineNumInput.Prompt = ":"
-	lineNumInput.CharLimit = 10
-	lineNumInput.Width = 10
+	lineNumInput.CharLimit = 20
+	lineNumInput.Width = 20
 
 	return Model{
 		keys:         keys,
@@ -679,7 +722,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View 渲染界面
 func (m Model) View() string {
 	if m.showHelp {
-		return m.help.View(m.keys)
+		return m.renderHelp()
 	}
 
 	if m.showError {
@@ -979,9 +1022,99 @@ func (m Model) renderSearchBar() string {
 	return searchStyle.Width(m.width).Render(searchWithHint)
 }
 
-// renderLineNumBar 渲染行号跳转栏
+// renderLineNumBar 渲染行号跳转栏（带命令补全提示）
 func (m Model) renderLineNumBar() string {
-	return searchStyle.Width(m.width).Render(m.lineNumInput.View())
+	input := m.lineNumInput.Value()
+	completions := getCommandCompletions(input)
+
+	var hints []string
+	for i, cmd := range completions {
+		hint := fmt.Sprintf(":%s - %s", cmd.Name, cmd.Description)
+		if i == 0 {
+			hints = append(hints, cmdHintActiveStyle.Render(hint))
+		} else {
+			hints = append(hints, cmdHintStyle.Render(hint))
+		}
+	}
+
+	bar := m.lineNumInput.View()
+	if len(hints) > 0 {
+		bar += "  " + strings.Join(hints, "  ")
+	}
+	bar += "  " + cmdHintStyle.Render("(Tab:补全 Enter:执行 Esc:取消)")
+
+	return searchStyle.Width(m.width).Render(bar)
+}
+
+// renderHelp 渲染自定义帮助视图
+func (m Model) renderHelp() string {
+	var b strings.Builder
+
+	renderSection := func(title string, items [][2]string) {
+		b.WriteString(helpSectionStyle.Render(title))
+		b.WriteString("\n")
+		for _, item := range items {
+			b.WriteString("  ")
+			b.WriteString(helpKeyStyle.Render(item[0]))
+			b.WriteString(helpDescStyle.Render(item[1]))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	renderSection("移动", [][2]string{
+		{"↑/k, ↓/j", "上下移动"},
+		{"PgUp/C-b", "向上翻页"},
+		{"PgDn/C-f", "向下翻页"},
+		{"C-u, C-d", "向上/下半页"},
+		{"gg", "跳转到顶部"},
+		{"G", "跳转到底部"},
+		{"<n>G, :<n>", "跳转到第 n 行"},
+		{"0", "跳转到第一行"},
+		{"$", "跳转到最后一行"},
+		{"^", "跳转到第一个会话"},
+	})
+
+	renderSection("折叠", [][2]string{
+		{"Space/o", "展开/折叠目录"},
+		{"h/←", "折叠目录或跳到父目录"},
+		{"l/→", "展开目录"},
+		{"E", "展开所有目录"},
+		{"C", "折叠所有目录"},
+	})
+
+	renderSection("搜索", [][2]string{
+		{"/", "进入搜索模式"},
+		{"Enter", "确认搜索"},
+		{"Esc", "取消搜索并清除过滤"},
+		{"Ctrl+c", "退出搜索并保留过滤"},
+		{"n/N", "下一个/上一个匹配"},
+	})
+
+	renderSection("会话操作", [][2]string{
+		{"Enter", "连接到选中会话"},
+		{"e", "编辑会话配置"},
+		{"n", "新建会话"},
+		{"D", "删除会话"},
+	})
+
+	// 从命令注册表自动生成命令部分
+	cmdItems := make([][2]string, len(commands))
+	for i, cmd := range commands {
+		aliases := strings.Join(cmd.Aliases, "/")
+		cmdItems[i] = [2]string{
+			fmt.Sprintf(":%s/:%s", cmd.Name, aliases),
+			cmd.Description,
+		}
+	}
+	renderSection("命令 (: 模式)", cmdItems)
+
+	renderSection("其他", [][2]string{
+		{"?", "显示/关闭帮助"},
+		{"Ctrl+c/:q", "退出程序"},
+	})
+
+	return helpContainerStyle.Render(b.String())
 }
 
 // handleSearchInput 处理搜索输入
@@ -1270,6 +1403,16 @@ func (m Model) handleLineNumInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.lineNumInput.SetValue("")
 		return m, nil
 
+	case tea.KeyTab:
+		// Tab 自动补全：匹配第一个命令
+		input := m.lineNumInput.Value()
+		completions := getCommandCompletions(input)
+		if len(completions) > 0 {
+			m.lineNumInput.SetValue(completions[0].Name)
+			m.lineNumInput.CursorEnd()
+		}
+		return m, nil
+
 	case tea.KeyEnter:
 		m.lineNumMode = false
 		cmdStr := m.lineNumInput.Value()
@@ -1277,36 +1420,29 @@ func (m Model) handleLineNumInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmdStr = m.lineNumBuffer
 		}
 
-		// 处理 :q 退出命令
-		if cmdStr == "q" || cmdStr == "quit" {
+		// 通过命令注册表匹配命令
+		switch matchCommand(cmdStr) {
+		case "q":
 			return m, tea.Quit
-		}
-
-		// 处理 :noh 清除搜索高亮/过滤
-		if cmdStr == "noh" || cmdStr == "nohlsearch" {
+		case "noh":
 			m.searchQuery = ""
 			m.searchInput.SetValue("")
 			m.lineNumBuffer = ""
 			m.lineNumInput.SetValue("")
 			return m, nil
-		}
-
-		// 处理 :pw 切换密码显示
-		if cmdStr == "pw" || cmdStr == "password" {
+		case "pw":
 			m.showPassword = !m.showPassword
 			m.lineNumBuffer = ""
 			m.lineNumInput.SetValue("")
 			return m, nil
 		}
 
-		// 解析行号并跳转
+		// 未匹配命令，尝试解析行号并跳转
 		if cmdStr != "" {
 			var lineNum int
 			fmt.Sscanf(cmdStr, "%d", &lineNum)
 			if lineNum > 0 {
-				// 转换为0-based索引
 				m.cursor = lineNum - 1
-				// 确保不越界
 				visibleNodes := m.getVisibleNodes()
 				if m.cursor >= len(visibleNodes) {
 					m.cursor = len(visibleNodes) - 1
