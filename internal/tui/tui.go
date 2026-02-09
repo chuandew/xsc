@@ -223,6 +223,10 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		key.WithKeys(""),
 		key.WithHelp("o/h/l/E/C", "toggle/close/open/expand/collapse"),
 	)
+	vimCommands := key.NewBinding(
+		key.WithKeys(""),
+		key.WithHelp(":pw", "toggle password visibility"),
+	)
 
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PageUp, k.PageDown},
@@ -230,7 +234,8 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{vimMovements, vimLineNum, vimSearch, vimFold},
 		{k.ToggleFold, k.OpenFold, k.CloseFold, k.OpenAllFolds},
 		{k.CloseAllFolds, k.Enter, k.Space, k.Search},
-		{k.Edit, k.New, k.Delete, k.Help, k.Quit},
+		{k.Edit, k.New, k.Delete, vimCommands},
+		{k.Help, k.Quit},
 	}
 }
 
@@ -262,6 +267,7 @@ type Model struct {
 	errorMessage  string
 	agentKeyCache *AgentKeyCache
 	lastKeyG      bool // 用于检测 'gg' 快捷键
+	showPassword  bool // 是否显示密码明文，默认隐藏
 }
 
 // 初始化 Model
@@ -867,14 +873,22 @@ func (m Model) renderDetail(width, height int) string {
 	case session.AuthTypePassword:
 		if s.Password != "" {
 			content.WriteString(detailKeyStyle.Render("Password: "))
-			content.WriteString(detailValueStyle.Render(s.Password) + "\n\n")
-		} else if s.EncryptedPassword != "" {
-			// 实时解密密码并显示
-			content.WriteString(detailKeyStyle.Render("Password: "))
-			if err := s.ResolvePassword(); err == nil {
+			if m.showPassword {
 				content.WriteString(detailValueStyle.Render(s.Password) + "\n\n")
 			} else {
-				content.WriteString(invalidStyle.Render(fmt.Sprintf("(decrypt failed: %v)", err)) + "\n\n")
+				content.WriteString(detailValueStyle.Render("********") + "\n\n")
+			}
+		} else if s.EncryptedPassword != "" {
+			content.WriteString(detailKeyStyle.Render("Password: "))
+			if m.showPassword {
+				// 仅在显示密码时才解密
+				if err := s.ResolvePassword(); err == nil {
+					content.WriteString(detailValueStyle.Render(s.Password) + "\n\n")
+				} else {
+					content.WriteString(invalidStyle.Render(fmt.Sprintf("(decrypt failed: %v)", err)) + "\n\n")
+				}
+			} else {
+				content.WriteString(detailValueStyle.Render("********") + "\n\n")
 			}
 		}
 	case session.AuthTypeKey:
@@ -949,6 +963,9 @@ func (m Model) renderStatusBar() string {
 		status.WriteString("Esc:clear Enter:confirm | ")
 	} else {
 		status.WriteString(fmt.Sprintf("Total: %d | ", len(m.getVisibleNodes())))
+	}
+	if m.showPassword {
+		status.WriteString("[PW] ")
 	}
 	status.WriteString("Press ? for help, :q or Ctrl+c to quit")
 
@@ -1269,6 +1286,14 @@ func (m Model) handleLineNumInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if cmdStr == "noh" || cmdStr == "nohlsearch" {
 			m.searchQuery = ""
 			m.searchInput.SetValue("")
+			m.lineNumBuffer = ""
+			m.lineNumInput.SetValue("")
+			return m, nil
+		}
+
+		// 处理 :pw 切换密码显示
+		if cmdStr == "pw" || cmdStr == "password" {
+			m.showPassword = !m.showPassword
 			m.lineNumBuffer = ""
 			m.lineNumInput.SetValue("")
 			return m, nil
