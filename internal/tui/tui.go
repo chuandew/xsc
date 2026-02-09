@@ -1094,19 +1094,6 @@ func (m Model) renderDetail(width, height int) string {
 	// 显示认证方式列表
 	content.WriteString(detailKeyStyle.Render("Auth Methods:\n"))
 
-	// 计算最大认证类型长度用于对齐
-	maxTypeLen := 0
-	methodsToShow := s.AuthMethods
-	if len(methodsToShow) == 0 {
-		methodsToShow = []session.AuthMethod{{Type: string(s.AuthType), Priority: 0, KeyPath: s.KeyPath}}
-	}
-	for _, am := range methodsToShow {
-		authTypeStr := m.formatAuthType(am.Type)
-		if len(authTypeStr) > maxTypeLen {
-			maxTypeLen = len(authTypeStr)
-		}
-	}
-
 	if len(s.AuthMethods) > 0 {
 		// 显示多种认证方式（SecureCRT 风格）
 		for i, am := range s.AuthMethods {
@@ -1119,22 +1106,26 @@ func (m Model) renderDetail(width, height int) string {
 			switch am.Type {
 			case "password":
 				if m.showPassword && am.Password != "" {
-					detail = fmt.Sprintf(" (%s)", am.Password)
+					detail = fmt.Sprintf("(%s)", am.Password)
 				} else if am.EncryptedPassword != "" {
-					detail = " (encrypted)"
+					detail = "(encrypted)"
 				} else if am.Password != "" {
-					detail = " ********"
+					detail = "(********)"
 				}
 			case "key", "publickey":
 				if am.KeyPath != "" {
-					detail = fmt.Sprintf(" (%s)", am.KeyPath)
+					detail = fmt.Sprintf("(%s)", am.KeyPath)
 				} else {
-					detail = " (global)"
+					detail = "(global)"
 				}
 			}
 
-			// 对齐显示：序号 + 图标 + 认证类型（固定宽度） + 详情
-			content.WriteString(detailValueStyle.Render(fmt.Sprintf("  %s %s%-*s%s\n", order, authIcon, maxTypeLen, authTypeStr, detail)))
+			// 左对齐显示：序号 + 图标 + 认证类型 + 详情（无固定宽度）
+			if detail != "" {
+				content.WriteString(detailValueStyle.Render(fmt.Sprintf("  %s %s%s %s\n", order, authIcon, authTypeStr, detail)))
+			} else {
+				content.WriteString(detailValueStyle.Render(fmt.Sprintf("  %s %s%s\n", order, authIcon, authTypeStr)))
+			}
 		}
 		content.WriteString("\n")
 	} else {
@@ -1148,32 +1139,36 @@ func (m Model) renderDetail(width, height int) string {
 		case session.AuthTypePassword:
 			if s.Password != "" {
 				if m.showPassword {
-					detail = fmt.Sprintf(" (%s)", s.Password)
+					detail = fmt.Sprintf("(%s)", s.Password)
 				} else {
-					detail = " (********)"
+					detail = "(********)"
 				}
 			} else if s.EncryptedPassword != "" {
 				if m.showPassword {
 					// 仅在显示密码时才解密
 					if err := s.ResolvePassword(); err == nil {
-						detail = fmt.Sprintf(" (%s)", s.Password)
+						detail = fmt.Sprintf("(%s)", s.Password)
 					} else {
-						detail = fmt.Sprintf(" (decrypt failed: %v)", err)
+						detail = fmt.Sprintf("(decrypt failed: %v)", err)
 					}
 				} else {
-					detail = " (********)"
+					detail = "(********)"
 				}
 			}
 		case session.AuthTypeKey:
 			if s.KeyPath != "" {
-				detail = fmt.Sprintf(" (%s)", s.KeyPath)
+				detail = fmt.Sprintf("(%s)", s.KeyPath)
 			} else {
-				detail = " (global)"
+				detail = "(global)"
 			}
 		}
 
-		// 对齐显示
-		content.WriteString(detailValueStyle.Render(fmt.Sprintf("  1. %s%-*s%s\n", authIcon, maxTypeLen, authTypeStr, detail)))
+		// 左对齐显示
+		if detail != "" {
+			content.WriteString(detailValueStyle.Render(fmt.Sprintf("  1. %s%s %s\n", authIcon, authTypeStr, detail)))
+		} else {
+			content.WriteString(detailValueStyle.Render(fmt.Sprintf("  1. %s%s\n", authIcon, authTypeStr)))
+		}
 
 		// 显示 SSH Agent keys（如果是 Agent 认证）
 		if s.AuthType == session.AuthTypeAgent {
