@@ -153,6 +153,11 @@ func parseSessionFile(filePath, basePath, masterPassword string) (*Session, erro
 				if value != "" {
 					parseAuthMethods(session, value)
 				}
+			case "ssh2 authentications v2", "ssh2 authentications", "authentications":
+				// SecureCRT 使用 S:"SSH2 Authentications V2" 字段，cleanKey 后变成 "ssh2 authentications v2"
+				if value != "" {
+					parseAuthMethods(session, value)
+				}
 			case "public key file":
 				session.PublicKeyFile = value
 			case "use agent":
