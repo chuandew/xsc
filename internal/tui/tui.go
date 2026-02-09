@@ -511,13 +511,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastKeyG = false
 			return m, nil
 
-		// Vim: n - 查找下一个
+		// Vim: n - 有搜索时查找下一个，无搜索时新建会话
 		case msg.String() == "n":
 			if m.searchQuery != "" {
 				m.searchNext(1)
+				m.lastKeyG = false
+				return m, nil
 			}
+			m.lineNumBuffer = ""
 			m.lastKeyG = false
-			return m, nil
+			return m, m.newSession()
 
 		// Vim: N - 查找上一个
 		case msg.String() == "N":
@@ -591,11 +594,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lineNumBuffer = ""
 			m.lastKeyG = false
 			return m, nil
-
-		case key.Matches(msg, m.keys.New):
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
-			return m, m.newSession()
 
 		case key.Matches(msg, m.keys.Delete):
 			selected := m.getSelectedNode()
