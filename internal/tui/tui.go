@@ -1172,11 +1172,12 @@ func (m Model) renderDetail(width, height int) string {
 		authLines = append(authLines, line)
 	}
 
-	// 统一渲染所有行
-	for _, line := range authLines {
-		content.WriteString(line + "\n")
+	// 统一渲染所有行 - 使用 lipgloss.JoinVertical 确保对齐
+	if len(authLines) > 0 {
+		authContent := lipgloss.JoinVertical(lipgloss.Left, authLines...)
+		content.WriteString(authContent)
+		content.WriteString("\n\n")
 	}
-	content.WriteString("\n")
 
 	// 显示 SSH Agent keys（如果是 Agent 认证）
 	if s.AuthType == session.AuthTypeAgent {
