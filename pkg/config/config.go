@@ -10,6 +10,7 @@ import (
 // GlobalConfig 全局配置
 type GlobalConfig struct {
 	SecureCRT SecureCRTConfig `yaml:"securecrt,omitempty"`
+	XShell    XShellConfig    `yaml:"xshell,omitempty"`
 	SSH       SSHConfig       `yaml:"ssh,omitempty"`
 }
 
@@ -21,6 +22,13 @@ type SSHConfig struct {
 
 // SecureCRTConfig SecureCRT配置
 type SecureCRTConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	SessionPath string `yaml:"session_path"`
+	Password    string `yaml:"password"`
+}
+
+// XShellConfig XShell配置
+type XShellConfig struct {
 	Enabled     bool   `yaml:"enabled"`
 	SessionPath string `yaml:"session_path"`
 	Password    string `yaml:"password"`
@@ -46,6 +54,11 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 		SecureCRT: SecureCRTConfig{
 			Enabled:     false,
 			SessionPath: filepath.Join(configDir, "securecrt_sessions"),
+			Password:    "",
+		},
+		XShell: XShellConfig{
+			Enabled:     false,
+			SessionPath: filepath.Join(configDir, "xshell_sessions"),
 			Password:    "",
 		},
 		SSH: SSHConfig{

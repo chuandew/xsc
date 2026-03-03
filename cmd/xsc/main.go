@@ -11,6 +11,7 @@ import (
 	"github.com/user/xsc/internal/session"
 	"github.com/user/xsc/internal/ssh"
 	"github.com/user/xsc/internal/tui"
+	"github.com/user/xsc/internal/xshell"
 	"github.com/user/xsc/pkg/config"
 )
 
@@ -37,6 +38,8 @@ func main() {
 		connectSession(os.Args[2])
 	case "import-securecrt":
 		convertSecureCRT()
+	case "import-xshell":
+		convertXShell()
 	case "help", "--help", "-h":
 		showHelp()
 	default:
@@ -197,6 +200,104 @@ func convertSecureCRT() {
 	fmt.Println("\nYou can now use 'xsc tui' to browse and connect to these sessions.")
 }
 
+func convertXShell() {
+	// 加载全局配置
+	globalConfig, err := config.LoadGlobalConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading global config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !globalConfig.XShell.Enabled {
+		fmt.Fprintln(os.Stderr, "XShell is not enabled in config")
+		os.Exit(1)
+	}
+
+	// 加载所有 Xshell 会话
+	xsConfig := xshell.Config{
+		SessionPath: globalConfig.XShell.SessionPath,
+		Password:    globalConfig.XShell.Password,
+	}
+
+	xsSessions, err := xshell.LoadSessions(xsConfig)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading Xshell sessions: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(xsSessions) == 0 {
+		fmt.Println("No Xshell sessions found")
+		return
+	}
+
+	// 获取 sessions 目录
+	sessionsDir, err := config.GetSessionsDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting sessions directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 创建新的目录（年月日-时分秒格式）
+	timestamp := time.Now().Format("20060102-150405")
+	targetDir := filepath.Join(sessionsDir, "xshell-converted", timestamp)
+
+	fmt.Printf("Converting %d Xshell sessions...\n", len(xsSessions))
+	fmt.Printf("Target directory: %s\n\n", targetDir)
+
+	converted := 0
+	errors := 0
+
+	for _, xsSession := range xsSessions {
+		// 立即解密密码（如果有）
+		if xsSession.EncryptedPassword != "" && globalConfig.XShell.Password != "" {
+			decryptedPwd, err := xshell.DecryptPassword(xsSession.EncryptedPassword, globalConfig.XShell.Password)
+			if err == nil {
+				xsSession.Password = decryptedPwd
+			}
+		}
+
+		// 转换为 xsc 会话
+		sessionData := xsSession.ConvertToXSCSession()
+
+		// 创建 xsc Session
+		xscSession := &session.Session{
+			Host:     sessionData["host"].(string),
+			Port:     sessionData["port"].(int),
+			User:     sessionData["user"].(string),
+			AuthType: session.AuthType(sessionData["auth_type"].(string)),
+		}
+
+		// 处理密码
+		if pwd, ok := sessionData["password"].(string); ok && pwd != "" {
+			xscSession.Password = pwd
+		} else if xsSession.Password != "" {
+			xscSession.Password = xsSession.Password
+		}
+
+		// 构建目标路径（保持目录层次结构）
+		var targetPath string
+		if xsSession.Folder != "" {
+			targetPath = filepath.Join(targetDir, xsSession.Folder, xsSession.Name+".yaml")
+		} else {
+			targetPath = filepath.Join(targetDir, xsSession.Name+".yaml")
+		}
+
+		// 保存会话
+		if err := session.SaveSession(xscSession, targetPath); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", xsSession.Name, err)
+			errors++
+			continue
+		}
+
+		fmt.Printf("  ✓ %s\n", xsSession.Name)
+		converted++
+	}
+
+	fmt.Printf("\n✓ Converted: %d | ✗ Errors: %d\n", converted, errors)
+	fmt.Printf("\nConverted sessions are saved in: %s\n", targetDir)
+	fmt.Println("\nYou can now use 'xsc tui' to browse and connect to these sessions.")
+}
+
 func showHelp() {
 	fmt.Println("xsc - XShell CLI - SSH Session Manager")
 	fmt.Println()
@@ -206,6 +307,7 @@ func showHelp() {
 	fmt.Println("  xsc list                     List all sessions")
 	fmt.Println("  xsc connect <path>           Connect to a session")
 	fmt.Println("  xsc import-securecrt         Import SecureCRT sessions to local format")
+	fmt.Println("  xsc import-xshell            Import Xshell sessions to local format")
 	fmt.Println("  xsc help                     Show this help message")
 	fmt.Println()
 	fmt.Println("Examples:")
@@ -213,6 +315,7 @@ func showHelp() {
 	fmt.Println("  xsc connect prod/db/master")
 	fmt.Println("  xsc connect web-server")
 	fmt.Println("  xsc import-securecrt")
+	fmt.Println("  xsc import-xshell")
 	fmt.Println()
 	fmt.Println("Session files are stored in: ~/.xsc/sessions/")
 }

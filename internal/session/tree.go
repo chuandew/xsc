@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/user/xsc/internal/securecrt"
+	"github.com/user/xsc/internal/xshell"
 	"github.com/user/xsc/pkg/config"
 )
 
@@ -148,6 +149,23 @@ func (n *SessionNode) IsSecureCRT() bool {
 	return false
 }
 
+// IsXShell 检查节点或其祖先是否为 XShell 会话
+func (n *SessionNode) IsXShell() bool {
+	current := n
+	for current != nil {
+		if current.Name == "xshell" {
+			return true
+		}
+		current = current.Parent
+	}
+	return false
+}
+
+// IsReadOnly 检查节点是否为只读（导入的外部会话）
+func (n *SessionNode) IsReadOnly() bool {
+	return n.IsSecureCRT() || n.IsXShell()
+}
+
 // GetPath 返回从根节点到当前节点的路径
 func (n *SessionNode) GetPath() string {
 	if n.Parent == nil {
@@ -226,11 +244,12 @@ func LoadSecureCRTSessions(cfg config.SecureCRTConfig) (*SessionNode, error) {
 	for _, scSession := range sessions {
 		sessionData := scSession.ConvertToXSCSession()
 		session := &Session{
-			Host:     sessionData["host"].(string),
-			Port:     sessionData["port"].(int),
-			User:     sessionData["user"].(string),
-			AuthType: AuthType(sessionData["auth_type"].(string)),
-			Valid:    true,
+			Host:           sessionData["host"].(string),
+			Port:           sessionData["port"].(int),
+			User:           sessionData["user"].(string),
+			AuthType:       AuthType(sessionData["auth_type"].(string)),
+			Valid:          true,
+			PasswordSource: "securecrt",
 		}
 
 		// 处理认证方法列表
@@ -269,6 +288,90 @@ func LoadSecureCRTSessions(cfg config.SecureCRTConfig) (*SessionNode, error) {
 
 		if scSession.Folder != "" {
 			folderPath := strings.Split(scSession.Folder, string(filepath.Separator))
+			current := root
+
+			for _, folderName := range folderPath {
+				var found *SessionNode
+				for _, child := range current.Children {
+					if child.IsDir && child.Name == folderName {
+						found = child
+						break
+					}
+				}
+
+				if found == nil {
+					found = &SessionNode{
+						Name:     folderName,
+						IsDir:    true,
+						Children: make([]*SessionNode, 0),
+					}
+					current.Children = append(current.Children, found)
+				}
+				current = found
+			}
+
+			current.Children = append(current.Children, node)
+		} else {
+			root.Children = append(root.Children, node)
+		}
+	}
+
+	return root, nil
+}
+
+// LoadXShellSessions 加载 XShell 会话
+func LoadXShellSessions(cfg config.XShellConfig) (*SessionNode, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+
+	xsConfig := xshell.Config{
+		SessionPath: cfg.SessionPath,
+		Password:    cfg.Password,
+	}
+
+	sessions, err := xshell.LoadSessions(xsConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	root := &SessionNode{
+		Name:     "xshell",
+		IsDir:    true,
+		Expanded: true,
+		Children: make([]*SessionNode, 0),
+	}
+
+	for _, xsSession := range sessions {
+		sessionData := xsSession.ConvertToXSCSession()
+		session := &Session{
+			Host:           sessionData["host"].(string),
+			Port:           sessionData["port"].(int),
+			User:           sessionData["user"].(string),
+			AuthType:       AuthType(sessionData["auth_type"].(string)),
+			Valid:          true,
+			PasswordSource: "xshell",
+		}
+
+		// 处理已解密的密码
+		if pwd, ok := sessionData["password"].(string); ok && pwd != "" {
+			session.Password = pwd
+		}
+
+		// 保存加密密码和主密码，用于延迟解密
+		if ep, ok := sessionData["encrypted_password"].(string); ok && ep != "" {
+			session.EncryptedPassword = ep
+			session.MasterPassword = cfg.Password
+		}
+
+		node := &SessionNode{
+			Name:    xsSession.Name,
+			IsDir:   false,
+			Session: session,
+		}
+
+		if xsSession.Folder != "" {
+			folderPath := strings.Split(xsSession.Folder, string(filepath.Separator))
 			current := root
 
 			for _, folderName := range folderPath {
