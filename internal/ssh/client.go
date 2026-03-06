@@ -13,6 +13,7 @@ import (
 
 	"github.com/user/xsc/internal/securecrt"
 	"github.com/user/xsc/internal/session"
+	"github.com/user/xsc/internal/xshell"
 	"github.com/user/xsc/pkg/config"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -57,7 +58,15 @@ func connectWithMultipleAuth(s *session.Session) error {
 	for i, authMethod := range s.AuthMethods {
 		// 延迟解密密码（如果需要）
 		if authMethod.Type == "password" && authMethod.Password == "" && authMethod.EncryptedPassword != "" {
-			decrypted, err := securecrt.DecryptPassword(authMethod.EncryptedPassword, s.MasterPassword)
+			// 根据密码来源选择解密器
+			var decrypted string
+			var err error
+			switch s.PasswordSource {
+			case "xshell":
+				decrypted, err = xshell.DecryptPassword(authMethod.EncryptedPassword, s.MasterPassword)
+			default:
+				decrypted, err = securecrt.DecryptPassword(authMethod.EncryptedPassword, s.MasterPassword)
+			}
 			if err != nil {
 				lastErr = fmt.Errorf("auth method %d (%s): failed to decrypt password: %w", i+1, authMethod.Type, err)
 				continue

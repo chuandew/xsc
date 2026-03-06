@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/user/xsc/internal/securecrt"
+	"github.com/user/xsc/internal/xshell"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,8 +44,9 @@ type Session struct {
 	Name              string `yaml:"-"`
 	Valid             bool   `yaml:"-"`
 	Error             error  `yaml:"-"`
-	EncryptedPassword string `yaml:"-"` // SecureCRT 加密密码（延迟解密）
-	MasterPassword    string `yaml:"-"` // SecureCRT 主密码（用于解密）
+	EncryptedPassword string `yaml:"-"` // 加密密码（延迟解密）
+	MasterPassword    string `yaml:"-"` // 主密码（用于解密）
+	PasswordSource    string `yaml:"-"` // 密码来源："securecrt" 或 "xshell"
 }
 
 // Validate 验证会话配置是否有效
@@ -94,8 +96,8 @@ func (s *Session) Validate() error {
 	return nil
 }
 
-// ResolvePassword 延迟解密密码（用于 SecureCRT 会话）
-// 如果密码已解密或不需要解密，直接返回
+// ResolvePassword 延迟解密密码（用于 SecureCRT / XShell 会话）
+// 根据 PasswordSource 选择对应的解密器
 func (s *Session) ResolvePassword() error {
 	if s.Password != "" || s.EncryptedPassword == "" {
 		return nil
@@ -103,7 +105,19 @@ func (s *Session) ResolvePassword() error {
 	if s.MasterPassword == "" {
 		return fmt.Errorf("master password not set for decryption")
 	}
-	decrypted, err := securecrt.DecryptPassword(s.EncryptedPassword, s.MasterPassword)
+
+	var decrypted string
+	var err error
+
+	switch s.PasswordSource {
+	case "securecrt":
+		decrypted, err = securecrt.DecryptPassword(s.EncryptedPassword, s.MasterPassword)
+	case "xshell":
+		decrypted, err = xshell.DecryptPassword(s.EncryptedPassword, s.MasterPassword)
+	default:
+		return fmt.Errorf("unknown password source: %q", s.PasswordSource)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to decrypt password: %w", err)
 	}

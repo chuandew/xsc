@@ -17,6 +17,7 @@ import (
 	"github.com/user/xsc/internal/securecrt"
 	"github.com/user/xsc/internal/session"
 	internalssh "github.com/user/xsc/internal/ssh"
+	"github.com/user/xsc/internal/xshell"
 	"github.com/user/xsc/pkg/config"
 )
 
@@ -48,6 +49,14 @@ var (
 
 	securecrtFileStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#d3869b"))
+
+	// XShell 样式（使用青色系区分）
+	xshellFolderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#458588")).
+				Bold(true)
+
+	xshellFileStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#8ec07c"))
 
 	lineNumberStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#665c54")).
@@ -659,8 +668,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if selected.IsDir {
 				m.errorMessage = "Cannot edit a directory"
 				m.showError = true
-			} else if selected.IsSecureCRT() {
-				m.errorMessage = "Cannot edit SecureCRT session (read-only)"
+			} else if selected.IsReadOnly() {
+				m.errorMessage = "Cannot edit imported session (read-only)"
 				m.showError = true
 			} else if selected.Session == nil {
 				m.errorMessage = "No session data available"
@@ -683,8 +692,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if selected.IsDir {
 				m.errorMessage = "Cannot delete a directory"
 				m.showError = true
-			} else if selected.IsSecureCRT() {
-				m.errorMessage = "Cannot delete SecureCRT session (read-only)"
+			} else if selected.IsReadOnly() {
+				m.errorMessage = "Cannot delete imported session (read-only)"
 				m.showError = true
 			} else if selected.Session == nil {
 				m.errorMessage = "No session data available"
@@ -704,8 +713,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if selected.IsDir {
 				m.errorMessage = "Cannot rename a directory"
 				m.showError = true
-			} else if selected.IsSecureCRT() {
-				m.errorMessage = "Cannot rename SecureCRT session (read-only)"
+			} else if selected.IsReadOnly() {
+				m.errorMessage = "Cannot rename imported session (read-only)"
 				m.showError = true
 			} else if selected.Session == nil {
 				m.errorMessage = "No session data available"
@@ -1001,6 +1010,7 @@ func (m Model) renderNode(node *session.SessionNode, selected bool) string {
 	var icon string
 	var name string
 	isSecureCRT := node.IsSecureCRT()
+	isXShell := node.IsXShell()
 
 	if node.IsDir {
 		if node.Expanded {
@@ -1011,12 +1021,14 @@ func (m Model) renderNode(node *session.SessionNode, selected bool) string {
 		// SecureCRT 目录使用特殊样式
 		if isSecureCRT {
 			name = securecrtFolderStyle.Render("[CRT] " + node.Name + "/")
+		} else if isXShell {
+			name = xshellFolderStyle.Render("[XSH] " + node.Name + "/")
 		} else {
 			name = folderStyle.Render(node.Name + "/")
 		}
 	} else {
-		// SecureCRT 会话使用锁定图标和特殊颜色
-		if isSecureCRT {
+		// SecureCRT / XShell 会话使用锁定图标和特殊颜色
+		if isSecureCRT || isXShell {
 			icon = "🔒 "
 		} else {
 			icon = "  "
@@ -1025,6 +1037,8 @@ func (m Model) renderNode(node *session.SessionNode, selected bool) string {
 			name = invalidStyle.Render(node.Name + " [invalid]")
 		} else if isSecureCRT {
 			name = securecrtFileStyle.Render(node.Name)
+		} else if isXShell {
+			name = xshellFileStyle.Render(node.Name)
 		} else {
 			name = fileStyle.Render(node.Name)
 		}
@@ -1110,8 +1124,16 @@ func (m Model) renderDetail(width, height int) string {
 				if am.EncryptedPassword != "" {
 					// 有加密密码，根据 showPassword 决定是否解密显示
 					if m.showPassword {
-						// 尝试解密并显示
-						if decrypted, err := securecrt.DecryptPassword(am.EncryptedPassword, s.MasterPassword); err == nil {
+						// 根据密码来源选择解密器
+						var decrypted string
+						var err error
+						switch s.PasswordSource {
+						case "xshell":
+							decrypted, err = xshell.DecryptPassword(am.EncryptedPassword, s.MasterPassword)
+						default:
+							decrypted, err = securecrt.DecryptPassword(am.EncryptedPassword, s.MasterPassword)
+						}
+						if err == nil {
 							detail = fmt.Sprintf(" (%s)", decrypted)
 						} else {
 							detail = fmt.Sprintf(" (decrypt failed: %v)", err)
@@ -1587,6 +1609,14 @@ func (m *Model) loadSessions() tea.Cmd {
 			}
 		}
 
+		// 如果启用了 XShell，加载 XShell 会话
+		if globalConfig.XShell.Enabled {
+			xsTree, err := session.LoadXShellSessions(globalConfig.XShell)
+			if err == nil && xsTree != nil {
+				tree.Children = append(tree.Children, xsTree)
+			}
+		}
+
 		return sessionsLoadedMsg{tree: tree, sessionsDir: sessionsDir}
 	}
 }
@@ -1646,8 +1676,8 @@ func (m Model) prepareNewSession() tea.Cmd {
 
 		if selected != nil {
 			// 检查是否在 SecureCRT 目录下
-			if selected.IsSecureCRT() {
-				return showErrorMsg{err: fmt.Errorf("cannot create session in SecureCRT directory (read-only)")}
+			if selected.IsReadOnly() {
+				return showErrorMsg{err: fmt.Errorf("cannot create session in imported directory (read-only)")}
 			}
 
 			if selected.IsDir {
