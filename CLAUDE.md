@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-XSC (XShell CLI) is a Go-based SSH session manager with a TUI (Bubble Tea) and CLI interface. Sessions are YAML files stored in `~/.xsc/sessions/`; the directory hierarchy becomes the tree structure in the TUI. It also supports importing and decrypting SecureCRT sessions.
+XSC (XShell CLI) is a Go-based SSH session manager with a TUI (Bubble Tea) and CLI interface. Sessions are YAML files stored in `~/.xsc/sessions/`; the directory hierarchy becomes the tree structure in the TUI. It also supports importing and decrypting SecureCRT and Xshell sessions.
 
 ## Build & Development Commands
 
@@ -27,19 +27,21 @@ Full quality check: `make fmt && make vet && make test`
 
 ## Architecture
 
-**Entry point**: `cmd/xsc/main.go` — command dispatcher routing to `tui`, `list`, `connect`, `import-securecrt`, `help`.
+**Entry point**: `cmd/xsc/main.go` — command dispatcher routing to `tui`, `list`, `connect`, `import-securecrt`, `import-xshell`, `help`.
 
 **Core packages** (all under `internal/`):
 
 - **tui/** — Bubble Tea model-view-update loop. Single file `tui.go` (~1300 LOC) containing the full TUI: multiple modes (normal, search, command, help, error), Vim-style keybindings defined in `KeyMap`/`DefaultKeyMap()`, virtual scrolling, tree rendering, details panel. Styles are defined at the top of the file. SSH connections launch via `tea.Exec()` which pauses the TUI.
 
-- **session/** — `session.go` defines the `Session` struct (YAML-serialized) with three `AuthType` values: `password`, `key`, `agent`. Supports `AuthMethod` list for multi-auth (SecureCRT). `tree.go` implements `SessionNode` for hierarchical tree organization with expand/collapse, filtering, and `LoadSecureCRTSessions()`.
+- **session/** — `session.go` defines the `Session` struct (YAML-serialized) with three `AuthType` values: `password`, `key`, `agent`. Supports `AuthMethod` list for multi-auth (SecureCRT). `PasswordSource` field distinguishes decryption backends ("securecrt" vs "xshell"). `tree.go` implements `SessionNode` for hierarchical tree organization with expand/collapse, filtering, `LoadSecureCRTSessions()`, and `LoadXShellSessions()`.
 
 - **ssh/** — Pure Go SSH client (`golang.org/x/crypto/ssh`) with multi-auth fallback: password, key, SSH Agent, keyboard-interactive. Auto-discovers default SSH keys in `~/.ssh/`. 10-second connection timeout. Handles terminal raw mode and SIGWINCH for window resize.
 
 - **securecrt/** — Parses SecureCRT `.ini` session files. Decrypts V2 passwords (prefix `02` uses SHA256+AES-256-CBC, prefix `03` uses bcrypt_pbkdf). Lazy decryption for performance. `bcrypt_pbkdf.go` has the custom key derivation.
 
-**Public package**: `pkg/config/` — global config singleton loaded from `~/.xsc/config.yaml`. Manages paths and settings for SecureCRT integration and SSH host key verification.
+- **xshell/** — Parses Xshell `.xsh` session files (INI format, UTF-16LE encoded). Decrypts passwords using RC4 with SHA256(masterPassword) as key, verified by SHA256 checksum. Auto-detects UTF-16LE BOM and encoding.
+
+**Public package**: `pkg/config/` — global config singleton loaded from `~/.xsc/config.yaml`. Manages paths and settings for SecureCRT/Xshell integration and SSH host key verification.
 
 ## Code Conventions
 

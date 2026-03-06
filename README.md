@@ -1,6 +1,6 @@
 # XSC - XShell CLI
 
-基于 Go 和 Bubble Tea 开发的 SSH 会话管理工具，支持本地 YAML 会话配置和 SecureCRT 会话导入。
+基于 Go 和 Bubble Tea 开发的 SSH 会话管理工具，支持本地 YAML 会话配置，以及导入 SecureCRT 和 Xshell 会话。
 
 ## 特性
 
@@ -12,6 +12,7 @@
 - 📱 原生体验：使用 Go 原生 SSH 客户端连接，无需依赖外部 `ssh` 或 `sshpass`
 - 📜 自动滚屏：列表内容超出屏幕时自动滚动保持光标可见
 - 🔗 SecureCRT 集成：直接加载 SecureCRT 会话配置，支持加密密码解密和多认证方式
+- 🔗 Xshell 集成：直接加载 Xshell `.xsh` 会话文件，支持 RC4 加密密码解密
 - ⌨️ 命令自动补全：命令模式下支持 Tab 补全
 
 ## 快速开始
@@ -59,6 +60,7 @@ xsc list                 # 列出所有会话
 xsc connect prod/my-server   # 直接连接指定会话
 xsc connect web          # 模糊匹配连接（匹配名称包含 "web" 的会话）
 xsc import-securecrt     # 将 SecureCRT 会话转换为 xsc 本地格式
+xsc import-xshell        # 将 Xshell 会话转换为 xsc 本地格式
 ```
 
 ## 会话配置
@@ -154,7 +156,7 @@ description: "堡垒机"
 | `D` | 删除选中会话（需输入 YES 确认） |
 | `?` | 显示快捷键帮助（任意键退出） |
 
-> SecureCRT 导入的会话为只读，不支持编辑、删除和重命名操作。
+> 导入的外部会话（SecureCRT / Xshell）为只读，不支持编辑、删除和重命名操作。
 
 ### 目录折叠 (Vim 风格)
 | 按键 | 功能 |
@@ -305,6 +307,85 @@ xsc import-securecrt
 
 转换后的会话保存在 `~/.xsc/sessions/securecrt-converted/YYYYMMDD-HHMMSS/` 目录下，保持原有目录结构。完成后会显示转换统计信息。
 
+## Xshell 集成
+
+xsc 支持直接加载 Xshell 的会话文件（`.xsh` 格式），无需手动转换。启用后，Xshell 会话在 TUI 中以青色样式显示在独立的 `[XSH] xshell/` 目录下，与本地会话和 SecureCRT 会话并列展示。
+
+### 第一步：找到 Xshell 会话目录
+
+Xshell 的会话文件默认存储路径：
+
+| 平台 | 默认路径 |
+|------|---------|
+| **Windows** | `%APPDATA%\NetSarang Computer\6\Xshell\Sessions` |
+| **Windows (旧版)** | `我的文档\NetSarang Computer\6\Xshell\Sessions` |
+
+你也可以在 Xshell 中通过菜单 **工具 → 选项 → 常规** 查看会话文件的实际存储路径。
+
+> 如果你的 Xshell 会话目录在 Windows 上，可以将整个 Sessions 目录拷贝到 Linux/macOS 上，xsc 能正确处理 UTF-16LE 编码的 `.xsh` 文件。
+
+### 第二步：配置 xsc
+
+编辑 `~/.xsc/config.yaml`：
+
+```yaml
+xshell:
+  enabled: true                                      # 启用 Xshell 集成
+  session_path: "/home/user/xshell-sessions"         # Xshell 会话目录路径（包含 .xsh 文件）
+  password: "your_master_password"                   # Xshell 主密码（用于解密会话中的加密密码）
+```
+
+> **关于主密码**：如果你在 Xshell 中设置了主密码（工具 → 选项 → 安全 → 设置主密码），需要在这里填入相同的密码。如果没有设置过主密码，可以留空，此时有密码的会话将无法解密，会以 SSH Agent 方式尝试连接。
+
+### 第三步：启动 TUI
+
+```bash
+xsc tui
+```
+
+启用后，TUI 界面中会多出一个青色的 `xshell/` 目录，其中包含你所有的 Xshell 会话，保持原有的目录层级结构。
+
+### Xshell 会话在 TUI 中的表现
+
+| 特性 | 说明 |
+|------|------|
+| 显示样式 | 青色文字，目录带 `[XSH]` 前缀，会话带 🔒 图标 |
+| 只读模式 | 不支持编辑(e)、删除(D)、重命名(c) 操作 |
+| 密码解密 | 延迟解密 — 仅在光标选中时实时解密当前会话密码 |
+| 密码显示 | 默认隐藏，使用 `:pw` 命令切换明文/密文显示 |
+| SSH 连接 | 按 Enter 直接连接 |
+
+### Xshell 密码加密
+
+xsc 支持解密 Xshell 使用主密码加密的会话密码：
+
+- 加密格式：Base64 编码的密文 + SHA256 校验和
+- 解密流程：Base64 解码 → SHA256(masterPassword) 生成密钥 → RC4 解密 → SHA256 校验验证
+
+### Xshell 文件格式说明
+
+Xshell 会话文件（`.xsh`）是 INI 格式，通常使用 UTF-16LE 编码（xsc 自动处理编码检测和转换）。主要解析以下段和字段：
+
+```ini
+[CONNECTION]
+Host=192.168.1.100
+Port=22
+
+[CONNECTION:AUTHENTICATION]
+UserName=root
+Password=<base64 encoded encrypted password>
+```
+
+### 永久转换为 xsc 本地格式
+
+如果你希望将 Xshell 会话永久转换为 xsc 本地 YAML 格式：
+
+```bash
+xsc import-xshell
+```
+
+转换后的会话保存在 `~/.xsc/sessions/xshell-converted/YYYYMMDD-HHMMSS/` 目录下，保持原有目录结构。完成后会显示转换统计信息。
+
 ## 全局配置
 
 xsc 的全局配置文件为 `~/.xsc/config.yaml`，完整配置项：
@@ -315,6 +396,12 @@ securecrt:
   enabled: false                    # 是否启用 SecureCRT 集成
   session_path: ""                  # SecureCRT 会话目录路径
   password: ""                      # SecureCRT 主密码（用于解密加密密码）
+
+# Xshell 集成配置
+xshell:
+  enabled: false                    # 是否启用 Xshell 集成
+  session_path: ""                  # Xshell 会话目录路径（包含 .xsh 文件）
+  password: ""                      # Xshell 主密码（用于解密加密密码）
 
 # SSH 连接配置
 ssh:
@@ -347,9 +434,12 @@ known_hosts 文件查找顺序：
     │       └── slave-01.yaml
     ├── staging/
     │   └── web-server.yaml
-    └── securecrt-converted/       # import-securecrt 转换后的会话
+    ├── securecrt-converted/       # import-securecrt 转换后的会话
+    │   └── 20240101-120000/
+    │       └── ...                # 保持 SecureCRT 原有目录结构
+    └── xshell-converted/          # import-xshell 转换后的会话
         └── 20240101-120000/
-            └── ...                # 保持 SecureCRT 原有目录结构
+            └── ...                # 保持 Xshell 原有目录结构
 ```
 
 ## 开发
