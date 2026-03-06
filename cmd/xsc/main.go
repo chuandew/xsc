@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/user/xsc/internal/mobaxterm"
 	"github.com/user/xsc/internal/securecrt"
 	"github.com/user/xsc/internal/session"
 	"github.com/user/xsc/internal/ssh"
@@ -40,6 +41,8 @@ func main() {
 		convertSecureCRT()
 	case "import-xshell":
 		convertXShell()
+	case "import-mobaxterm":
+		convertMobaXterm()
 	case "help", "--help", "-h":
 		showHelp()
 	default:
@@ -298,6 +301,104 @@ func convertXShell() {
 	fmt.Println("\nYou can now use 'xsc tui' to browse and connect to these sessions.")
 }
 
+func convertMobaXterm() {
+	// 加载全局配置
+	globalConfig, err := config.LoadGlobalConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading global config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !globalConfig.MobaXterm.Enabled {
+		fmt.Fprintln(os.Stderr, "MobaXterm is not enabled in config")
+		os.Exit(1)
+	}
+
+	// 加载所有 MobaXterm 会话
+	mxConfig := mobaxterm.Config{
+		SessionPath: globalConfig.MobaXterm.SessionPath,
+		Password:    globalConfig.MobaXterm.Password,
+	}
+
+	mxSessions, err := mobaxterm.LoadSessions(mxConfig)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading MobaXterm sessions: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(mxSessions) == 0 {
+		fmt.Println("No MobaXterm sessions found")
+		return
+	}
+
+	// 获取 sessions 目录
+	sessionsDir, err := config.GetSessionsDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting sessions directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 创建新的目录（年月日-时分秒格式）
+	timestamp := time.Now().Format("20060102-150405")
+	targetDir := filepath.Join(sessionsDir, "mobaxterm-converted", timestamp)
+
+	fmt.Printf("Converting %d MobaXterm sessions...\n", len(mxSessions))
+	fmt.Printf("Target directory: %s\n\n", targetDir)
+
+	converted := 0
+	errors := 0
+
+	for _, mxSession := range mxSessions {
+		// 立即解密密码（如果有）
+		if mxSession.EncryptedPassword != "" && globalConfig.MobaXterm.Password != "" {
+			decryptedPwd, err := mobaxterm.DecryptPassword(mxSession.EncryptedPassword, globalConfig.MobaXterm.Password)
+			if err == nil {
+				mxSession.Password = decryptedPwd
+			}
+		}
+
+		// 转换为 xsc 会话
+		sessionData := mxSession.ConvertToXSCSession()
+
+		// 创建 xsc Session
+		xscSession := &session.Session{
+			Host:     sessionData["host"].(string),
+			Port:     sessionData["port"].(int),
+			User:     sessionData["user"].(string),
+			AuthType: session.AuthType(sessionData["auth_type"].(string)),
+		}
+
+		// 处理密码
+		if pwd, ok := sessionData["password"].(string); ok && pwd != "" {
+			xscSession.Password = pwd
+		} else if mxSession.Password != "" {
+			xscSession.Password = mxSession.Password
+		}
+
+		// 构建目标路径（保持目录层次结构）
+		var targetPath string
+		if mxSession.Folder != "" {
+			targetPath = filepath.Join(targetDir, mxSession.Folder, mxSession.Name+".yaml")
+		} else {
+			targetPath = filepath.Join(targetDir, mxSession.Name+".yaml")
+		}
+
+		// 保存会话
+		if err := session.SaveSession(xscSession, targetPath); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", mxSession.Name, err)
+			errors++
+			continue
+		}
+
+		fmt.Printf("  ✓ %s\n", mxSession.Name)
+		converted++
+	}
+
+	fmt.Printf("\n✓ Converted: %d | ✗ Errors: %d\n", converted, errors)
+	fmt.Printf("\nConverted sessions are saved in: %s\n", targetDir)
+	fmt.Println("\nYou can now use 'xsc tui' to browse and connect to these sessions.")
+}
+
 func showHelp() {
 	fmt.Println("xsc - XShell CLI - SSH Session Manager")
 	fmt.Println()
@@ -308,6 +409,7 @@ func showHelp() {
 	fmt.Println("  xsc connect <path>           Connect to a session")
 	fmt.Println("  xsc import-securecrt         Import SecureCRT sessions to local format")
 	fmt.Println("  xsc import-xshell            Import Xshell sessions to local format")
+	fmt.Println("  xsc import-mobaxterm         Import MobaXterm sessions to local format")
 	fmt.Println("  xsc help                     Show this help message")
 	fmt.Println()
 	fmt.Println("Examples:")
@@ -316,7 +418,7 @@ func showHelp() {
 	fmt.Println("  xsc connect web-server")
 	fmt.Println("  xsc import-securecrt")
 	fmt.Println("  xsc import-xshell")
+	fmt.Println("  xsc import-mobaxterm")
 	fmt.Println()
 	fmt.Println("Session files are stored in: ~/.xsc/sessions/")
 }
-

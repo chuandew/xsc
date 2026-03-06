@@ -7,15 +7,28 @@ import (
 )
 
 func TestLoadGlobalConfig(t *testing.T) {
-	// 测试配置文件不存在的情况
+	// 重置全局配置缓存
+	globalConfig = nil
+
+	// 测试配置文件不存在的情况（应返回默认配置）
 	cfg, err := LoadGlobalConfig()
-	// 应该返回错误，因为默认配置文件不存在
-	if err == nil {
-		// 如果没有错误，检查是否返回了默认配置
-		if !cfg.SecureCRT.Enabled {
-			t.Error("默认配置应该启用 SecureCRT")
-		}
+	if err != nil {
+		t.Fatalf("加载默认配置失败: %v", err)
 	}
+
+	// 默认配置中各导入源均未启用
+	if cfg.SecureCRT.Enabled {
+		t.Error("默认配置不应启用 SecureCRT")
+	}
+	if cfg.XShell.Enabled {
+		t.Error("默认配置不应启用 XShell")
+	}
+	if cfg.MobaXterm.Enabled {
+		t.Error("默认配置不应启用 MobaXterm")
+	}
+
+	// 重置以避免影响其他测试
+	globalConfig = nil
 }
 
 func TestSaveAndLoadGlobalConfig(t *testing.T) {

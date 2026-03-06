@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/user/xsc/internal/mobaxterm"
 	"github.com/user/xsc/internal/securecrt"
 	"github.com/user/xsc/internal/xshell"
 	"gopkg.in/yaml.v3"
@@ -46,7 +47,7 @@ type Session struct {
 	Error             error  `yaml:"-"`
 	EncryptedPassword string `yaml:"-"` // 加密密码（延迟解密）
 	MasterPassword    string `yaml:"-"` // 主密码（用于解密）
-	PasswordSource    string `yaml:"-"` // 密码来源："securecrt" 或 "xshell"
+	PasswordSource    string `yaml:"-"` // 密码来源："securecrt"、"xshell" 或 "mobaxterm"
 }
 
 // Validate 验证会话配置是否有效
@@ -114,6 +115,8 @@ func (s *Session) ResolvePassword() error {
 		decrypted, err = securecrt.DecryptPassword(s.EncryptedPassword, s.MasterPassword)
 	case "xshell":
 		decrypted, err = xshell.DecryptPassword(s.EncryptedPassword, s.MasterPassword)
+	case "mobaxterm":
+		decrypted, err = mobaxterm.DecryptPassword(s.EncryptedPassword, s.MasterPassword)
 	default:
 		return fmt.Errorf("unknown password source: %q", s.PasswordSource)
 	}

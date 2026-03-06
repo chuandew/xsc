@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/user/xsc/internal/mobaxterm"
 	"github.com/user/xsc/internal/securecrt"
 	"github.com/user/xsc/internal/session"
 	internalssh "github.com/user/xsc/internal/ssh"
@@ -57,6 +58,14 @@ var (
 
 	xshellFileStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#8ec07c"))
+
+	// MobaXterm 样式（使用橙色系区分）
+	mobaxtermFolderStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#d65d0e")).
+				Bold(true)
+
+	mobaxtermFileStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#fe8019"))
 
 	lineNumberStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#665c54")).
@@ -1011,6 +1020,7 @@ func (m Model) renderNode(node *session.SessionNode, selected bool) string {
 	var name string
 	isSecureCRT := node.IsSecureCRT()
 	isXShell := node.IsXShell()
+	isMobaXterm := node.IsMobaXterm()
 
 	if node.IsDir {
 		if node.Expanded {
@@ -1018,17 +1028,19 @@ func (m Model) renderNode(node *session.SessionNode, selected bool) string {
 		} else {
 			icon = "▸ "
 		}
-		// SecureCRT 目录使用特殊样式
+		// SecureCRT / XShell / MobaXterm 目录使用特殊样式
 		if isSecureCRT {
 			name = securecrtFolderStyle.Render("[CRT] " + node.Name + "/")
 		} else if isXShell {
 			name = xshellFolderStyle.Render("[XSH] " + node.Name + "/")
+		} else if isMobaXterm {
+			name = mobaxtermFolderStyle.Render("[MXT] " + node.Name + "/")
 		} else {
 			name = folderStyle.Render(node.Name + "/")
 		}
 	} else {
-		// SecureCRT / XShell 会话使用锁定图标和特殊颜色
-		if isSecureCRT || isXShell {
+		// SecureCRT / XShell / MobaXterm 会话使用锁定图标和特殊颜色
+		if isSecureCRT || isXShell || isMobaXterm {
 			icon = "🔒 "
 		} else {
 			icon = "  "
@@ -1039,6 +1051,8 @@ func (m Model) renderNode(node *session.SessionNode, selected bool) string {
 			name = securecrtFileStyle.Render(node.Name)
 		} else if isXShell {
 			name = xshellFileStyle.Render(node.Name)
+		} else if isMobaXterm {
+			name = mobaxtermFileStyle.Render(node.Name)
 		} else {
 			name = fileStyle.Render(node.Name)
 		}
@@ -1130,6 +1144,8 @@ func (m Model) renderDetail(width, height int) string {
 						switch s.PasswordSource {
 						case "xshell":
 							decrypted, err = xshell.DecryptPassword(am.EncryptedPassword, s.MasterPassword)
+						case "mobaxterm":
+							decrypted, err = mobaxterm.DecryptPassword(am.EncryptedPassword, s.MasterPassword)
 						default:
 							decrypted, err = securecrt.DecryptPassword(am.EncryptedPassword, s.MasterPassword)
 						}
@@ -1614,6 +1630,14 @@ func (m *Model) loadSessions() tea.Cmd {
 			xsTree, err := session.LoadXShellSessions(globalConfig.XShell)
 			if err == nil && xsTree != nil {
 				tree.Children = append(tree.Children, xsTree)
+			}
+		}
+
+		// 如果启用了 MobaXterm，加载 MobaXterm 会话
+		if globalConfig.MobaXterm.Enabled {
+			mxTree, err := session.LoadMobaXtermSessions(globalConfig.MobaXterm)
+			if err == nil && mxTree != nil {
+				tree.Children = append(tree.Children, mxTree)
 			}
 		}
 

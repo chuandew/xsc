@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/user/xsc/internal/mobaxterm"
 	"github.com/user/xsc/internal/securecrt"
 	"github.com/user/xsc/internal/session"
 	"github.com/user/xsc/internal/xshell"
@@ -64,6 +65,8 @@ func connectWithMultipleAuth(s *session.Session) error {
 			switch s.PasswordSource {
 			case "xshell":
 				decrypted, err = xshell.DecryptPassword(authMethod.EncryptedPassword, s.MasterPassword)
+			case "mobaxterm":
+				decrypted, err = mobaxterm.DecryptPassword(authMethod.EncryptedPassword, s.MasterPassword)
 			default:
 				decrypted, err = securecrt.DecryptPassword(authMethod.EncryptedPassword, s.MasterPassword)
 			}

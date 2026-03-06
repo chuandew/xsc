@@ -1,6 +1,6 @@
 # XSC - XShell CLI
 
-基于 Go 和 Bubble Tea 开发的 SSH 会话管理工具，支持本地 YAML 会话配置，以及导入 SecureCRT 和 Xshell 会话。
+基于 Go 和 Bubble Tea 开发的 SSH 会话管理工具，支持本地 YAML 会话配置，以及导入 SecureCRT、Xshell 和 MobaXterm 会话。
 
 ## 特性
 
@@ -13,6 +13,7 @@
 - 📜 自动滚屏：列表内容超出屏幕时自动滚动保持光标可见
 - 🔗 SecureCRT 集成：直接加载 SecureCRT 会话配置，支持加密密码解密和多认证方式
 - 🔗 Xshell 集成：直接加载 Xshell `.xsh` 会话文件，支持 RC4 加密密码解密
+- 🔗 MobaXterm 集成：直接加载 MobaXterm INI 配置文件中的 SSH 书签，支持 AES-CFB-8 加密密码解密
 - ⌨️ 命令自动补全：命令模式下支持 Tab 补全
 
 ## 快速开始
@@ -61,6 +62,7 @@ xsc connect prod/my-server   # 直接连接指定会话
 xsc connect web          # 模糊匹配连接（匹配名称包含 "web" 的会话）
 xsc import-securecrt     # 将 SecureCRT 会话转换为 xsc 本地格式
 xsc import-xshell        # 将 Xshell 会话转换为 xsc 本地格式
+xsc import-mobaxterm     # 将 MobaXterm 会话转换为 xsc 本地格式
 ```
 
 ## 会话配置
@@ -156,7 +158,7 @@ description: "堡垒机"
 | `D` | 删除选中会话（需输入 YES 确认） |
 | `?` | 显示快捷键帮助（任意键退出） |
 
-> 导入的外部会话（SecureCRT / Xshell）为只读，不支持编辑、删除和重命名操作。
+> 导入的外部会话（SecureCRT / Xshell / MobaXterm）为只读，不支持编辑、删除和重命名操作。
 
 ### 目录折叠 (Vim 风格)
 | 按键 | 功能 |
@@ -386,6 +388,93 @@ xsc import-xshell
 
 转换后的会话保存在 `~/.xsc/sessions/xshell-converted/YYYYMMDD-HHMMSS/` 目录下，保持原有目录结构。完成后会显示转换统计信息。
 
+## MobaXterm 集成
+
+xsc 支持直接加载 MobaXterm 的配置文件（`MobaXterm.ini`）中的 SSH 书签，无需手动转换。启用后，MobaXterm 会话在 TUI 中以橙色样式显示在独立的 `[MXT] mobaxterm/` 目录下，与本地会话和其他导入会话并列展示。
+
+### 第一步：找到 MobaXterm 配置文件
+
+MobaXterm 的配置文件路径取决于安装方式：
+
+| 安装方式 | 配置文件路径 |
+|---------|------------|
+| **安装版** | `%APPDATA%\MobaXterm\MobaXterm.ini` 或 `C:\Users\<用户名>\AppData\Roaming\MobaXterm\MobaXterm.ini` |
+| **便携版** | 与 `MobaXterm.exe` 同目录下的 `MobaXterm.ini` |
+
+你也可以在 MobaXterm 中通过菜单 **Settings → Configuration → General** 查看配置文件路径。
+
+> 将 `MobaXterm.ini` 文件拷贝到 Linux/macOS 上即可使用，xsc 能正确处理 Windows-1252 编码。
+
+### 第二步：配置 xsc
+
+编辑 `~/.xsc/config.yaml`：
+
+```yaml
+mobaxterm:
+  enabled: true                                      # 启用 MobaXterm 集成
+  session_path: "/home/user/MobaXterm.ini"           # MobaXterm.ini 文件路径
+  password: "your_master_password"                   # MobaXterm 主密码（用于解密 Professional 版加密密码）
+```
+
+> **关于主密码**：MobaXterm Professional 版支持使用主密码加密保存的密码。如果你设置了主密码，需要在这里填入。免费版的加密密码暂不支持解密，此时会话将以 SSH Agent 方式尝试连接。**注意**：MobaXterm 的密码通常保存在 Windows 注册表中（`HKCU\Software\Mobatek\MobaXterm\P`），而非 INI 文件内。如果 INI 文件中不包含密码信息，可以将 `password` 留空。
+
+### 第三步：启动 TUI
+
+```bash
+xsc tui
+```
+
+启用后，TUI 界面中会多出一个橙色的 `mobaxterm/` 目录，其中包含你所有的 MobaXterm SSH 书签，按 `SubRep` 目录层级组织。
+
+### MobaXterm 会话在 TUI 中的表现
+
+| 特性 | 说明 |
+|------|------|
+| 显示样式 | 橙色文字，目录带 `[MXT]` 前缀，会话带 🔒 图标 |
+| 只读模式 | 不支持编辑(e)、删除(D)、重命名(c) 操作 |
+| 密码解密 | 延迟解密 — 仅在光标选中时实时解密当前会话密码 |
+| 密码显示 | 默认隐藏，使用 `:pw` 命令切换明文/密文显示 |
+| 会话类型 | 仅导入 SSH 类型（type=0）的书签，自动跳过 RDP、VNC、FTP 等其他类型 |
+| SSH 连接 | 按 Enter 直接连接 |
+
+### MobaXterm 密码加密
+
+xsc 支持解密 MobaXterm Professional 版使用的 AES-CFB-8 加密格式：
+
+- 密钥派生：SHA512(masterPassword) 取前 32 字节作为 AES-256 密钥
+- IV 生成：AES-ECB 加密 16 字节全零
+- 解密模式：AES-CFB-8（逐字节模式，与标准库 CFB-128 不同）
+
+> 免费版 MobaXterm 使用不同的加密方式（nibble-based），当前暂不支持。遇到免费版加密密码时会自动跳过密码解密，不影响会话导入。
+
+### MobaXterm INI 文件格式说明
+
+MobaXterm 的书签存储在 INI 文件的 `[Bookmarks]` 和 `[Bookmarks_N]` sections 中。每个 section 包含：
+
+- `SubRep=` — 目录路径（用于组织书签层级）
+- `ImgNum=` — 图标编号（xsc 忽略）
+- 会话行格式：`SessionName=type%host%port%username%...#FontSettings%...`
+
+其中 `type=0` 表示 SSH 会话。会话名中的特殊字符使用转义格式：
+
+| 转义序列 | 原始字符 |
+|---------|---------|
+| `__DIEZE__` | `#` |
+| `__PTVIRG__` | `;` |
+| `__DBLQUO__` | `"` |
+| `__PIPE__` | `\|` |
+| `__PERCENT__` | `%` |
+
+### 永久转换为 xsc 本地格式
+
+如果你希望将 MobaXterm 会话永久转换为 xsc 本地 YAML 格式：
+
+```bash
+xsc import-mobaxterm
+```
+
+转换后的会话保存在 `~/.xsc/sessions/mobaxterm-converted/YYYYMMDD-HHMMSS/` 目录下，按原有 SubRep 目录结构组织。完成后会显示转换统计信息。
+
 ## 全局配置
 
 xsc 的全局配置文件为 `~/.xsc/config.yaml`，完整配置项：
@@ -402,6 +491,12 @@ xshell:
   enabled: false                    # 是否启用 Xshell 集成
   session_path: ""                  # Xshell 会话目录路径（包含 .xsh 文件）
   password: ""                      # Xshell 主密码（用于解密加密密码）
+
+# MobaXterm 集成配置
+mobaxterm:
+  enabled: false                    # 是否启用 MobaXterm 集成
+  session_path: ""                  # MobaXterm.ini 文件路径
+  password: ""                      # MobaXterm 主密码（Professional 版，用于 AES-CFB-8 解密）
 
 # SSH 连接配置
 ssh:
@@ -437,9 +532,12 @@ known_hosts 文件查找顺序：
     ├── securecrt-converted/       # import-securecrt 转换后的会话
     │   └── 20240101-120000/
     │       └── ...                # 保持 SecureCRT 原有目录结构
-    └── xshell-converted/          # import-xshell 转换后的会话
+    ├── xshell-converted/          # import-xshell 转换后的会话
+    │   └── 20240101-120000/
+    │       └── ...                # 保持 Xshell 原有目录结构
+    └── mobaxterm-converted/       # import-mobaxterm 转换后的会话
         └── 20240101-120000/
-            └── ...                # 保持 Xshell 原有目录结构
+            └── ...                # 按 SubRep 目录结构组织
 ```
 
 ## 开发

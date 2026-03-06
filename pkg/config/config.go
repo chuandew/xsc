@@ -11,6 +11,7 @@ import (
 type GlobalConfig struct {
 	SecureCRT SecureCRTConfig `yaml:"securecrt,omitempty"`
 	XShell    XShellConfig    `yaml:"xshell,omitempty"`
+	MobaXterm MobaXtermConfig `yaml:"mobaxterm,omitempty"`
 	SSH       SSHConfig       `yaml:"ssh,omitempty"`
 }
 
@@ -29,6 +30,13 @@ type SecureCRTConfig struct {
 
 // XShellConfig XShell配置
 type XShellConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	SessionPath string `yaml:"session_path"`
+	Password    string `yaml:"password"`
+}
+
+// MobaXtermConfig MobaXterm配置
+type MobaXtermConfig struct {
 	Enabled     bool   `yaml:"enabled"`
 	SessionPath string `yaml:"session_path"`
 	Password    string `yaml:"password"`
@@ -59,6 +67,11 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 		XShell: XShellConfig{
 			Enabled:     false,
 			SessionPath: filepath.Join(configDir, "xshell_sessions"),
+			Password:    "",
+		},
+		MobaXterm: MobaXtermConfig{
+			Enabled:     false,
+			SessionPath: filepath.Join(configDir, "mobaxterm_sessions"),
 			Password:    "",
 		},
 		SSH: SSHConfig{
