@@ -33,9 +33,9 @@ Full quality check: `make fmt && make vet && make test`
 
 - **tui/** — Bubble Tea model-view-update loop. Single file `tui.go` (~1300 LOC) containing the full TUI: multiple modes (normal, search, command, help, error), Vim-style keybindings defined in `KeyMap`/`DefaultKeyMap()`, virtual scrolling, tree rendering, details panel. Styles are defined at the top of the file. SSH connections launch via `tea.Exec()` which pauses the TUI.
 
-- **session/** — `session.go` defines the `Session` struct (YAML-serialized) with three `AuthType` values: `password`, `key`, `agent`. `tree.go` implements `SessionNode` for hierarchical tree organization with expand/collapse and filtering.
+- **session/** — `session.go` defines the `Session` struct (YAML-serialized) with three `AuthType` values: `password`, `key`, `agent`. Supports `AuthMethod` list for multi-auth (SecureCRT). `tree.go` implements `SessionNode` for hierarchical tree organization with expand/collapse, filtering, and `LoadSecureCRTSessions()`.
 
-- **ssh/** — Pure Go SSH client (`golang.org/x/crypto/ssh`) with three auth strategies (password, key, SSH Agent). Handles terminal raw mode and SIGWINCH for window resize.
+- **ssh/** — Pure Go SSH client (`golang.org/x/crypto/ssh`) with multi-auth fallback: password, key, SSH Agent, keyboard-interactive. Auto-discovers default SSH keys in `~/.ssh/`. 10-second connection timeout. Handles terminal raw mode and SIGWINCH for window resize.
 
 - **securecrt/** — Parses SecureCRT `.ini` session files. Decrypts V2 passwords (prefix `02` uses SHA256+AES-256-CBC, prefix `03` uses bcrypt_pbkdf). Lazy decryption for performance. `bcrypt_pbkdf.go` has the custom key derivation.
 
