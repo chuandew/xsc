@@ -52,6 +52,140 @@ func Connect(s *session.Session) error {
 	}
 }
 
+// Dial 建立 SSH 客户端连接（不创建交互式会话）
+// 返回 *ssh.Client 和可选的 cleanup 函数（用于关闭 SSH Agent 连接）
+// 调用方负责关闭 client，并在关闭后调用 cleanup（如果非 nil）
+func Dial(s *session.Session) (*ssh.Client, func(), error) {
+	if !s.Valid {
+		return nil, nil, fmt.Errorf("invalid session: %v", s.Error)
+	}
+
+	// 如果有多种认证方式配置，按顺序尝试
+	if len(s.AuthMethods) > 0 {
+		return dialWithMultipleAuth(s)
+	}
+
+	// 延迟解密密码
+	if s.AuthType == session.AuthTypePassword && s.Password == "" && s.EncryptedPassword != "" {
+		if err := s.ResolvePassword(); err != nil {
+			return nil, nil, fmt.Errorf("failed to resolve password: %w", err)
+		}
+	}
+
+	config, cleanup, err := getSSHConfig(s)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	addr := fmt.Sprintf("%s:%d", s.Host, s.Port)
+	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, nil, fmt.Errorf("connection timeout: %w", err)
+	}
+
+	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	if err != nil {
+		conn.Close()
+		if cleanup != nil {
+			cleanup()
+		}
+		return nil, nil, fmt.Errorf("failed to create SSH connection: %w", err)
+	}
+
+	client := ssh.NewClient(c, chans, reqs)
+
+	// 启动 keepalive goroutine，每 30 秒发送一次心跳
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	return client, cleanup, nil
+}
+
+// dialWithMultipleAuth 按顺序尝试多种认证方式建立连接（不创建交互式会话）
+func dialWithMultipleAuth(s *session.Session) (*ssh.Client, func(), error) {
+	var lastErr error
+
+	for i, authMethod := range s.AuthMethods {
+		// 延迟解密密码（如果需要）
+		if authMethod.Type == "password" && authMethod.Password == "" && authMethod.EncryptedPassword != "" {
+			var decrypted string
+			var err error
+			switch s.PasswordSource {
+			case "xshell":
+				decrypted, err = xshell.DecryptPassword(authMethod.EncryptedPassword, s.MasterPassword)
+			case "mobaxterm":
+				decrypted, err = mobaxterm.DecryptPassword(authMethod.EncryptedPassword, s.MasterPassword)
+			default:
+				decrypted, err = securecrt.DecryptPassword(authMethod.EncryptedPassword, s.MasterPassword)
+			}
+			if err != nil {
+				lastErr = fmt.Errorf("auth method %d (%s): failed to decrypt password: %w", i+1, authMethod.Type, err)
+				continue
+			}
+			authMethod.Password = decrypted
+			s.AuthMethods[i].Password = decrypted
+		}
+
+		config, cleanup, err := getSSHConfigForAuthMethod(s, authMethod)
+		if err != nil {
+			lastErr = fmt.Errorf("auth method %d (%s): %w", i+1, authMethod.Type, err)
+			continue
+		}
+
+		addr := fmt.Sprintf("%s:%d", s.Host, s.Port)
+		conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+		if err != nil {
+			if cleanup != nil {
+				cleanup()
+			}
+			lastErr = fmt.Errorf("auth method %d (%s): connection timeout: %w", i+1, authMethod.Type, err)
+			continue
+		}
+
+		c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+		if err != nil {
+			conn.Close()
+			if cleanup != nil {
+				cleanup()
+			}
+			lastErr = fmt.Errorf("auth method %d (%s): %w", i+1, authMethod.Type, err)
+			continue
+		}
+
+		client := ssh.NewClient(c, chans, reqs)
+
+		// 启动 keepalive goroutine，每 30 秒发送一次心跳
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+				if err != nil {
+					return
+				}
+			}
+		}()
+
+		return client, cleanup, nil
+	}
+
+	if lastErr != nil {
+		return nil, nil, fmt.Errorf("all authentication methods failed: %w", lastErr)
+	}
+	return nil, nil, fmt.Errorf("all authentication methods failed")
+}
+
 // connectWithMultipleAuth 按顺序尝试多种认证方式
 func connectWithMultipleAuth(s *session.Session) error {
 	var lastErr error

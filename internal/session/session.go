@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/user/xsc/internal/mobaxterm"
 	"github.com/user/xsc/internal/securecrt"
@@ -185,4 +186,30 @@ func SaveSession(session *Session, filePath string) error {
 	}
 
 	return nil
+}
+
+// FindSession 在指定目录下查找匹配的 session
+// 支持精确路径匹配和模糊名称匹配
+func FindSession(sessionsDir, path string) (*Session, error) {
+	// 尝试精确匹配
+	s, err := LoadSession(filepath.Join(sessionsDir, path+".yaml"))
+	if err == nil && s != nil && s.Valid {
+		return s, nil
+	}
+
+	// 尝试模糊匹配
+	sessions, err := LoadAllSessions(sessionsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load sessions: %w", err)
+	}
+
+	for _, sess := range sessions {
+		relPath, _ := filepath.Rel(sessionsDir, sess.FilePath)
+		relPath = strings.TrimSuffix(relPath, ".yaml")
+		if (strings.Contains(relPath, path) || path == filepath.Base(relPath)) && sess.Valid {
+			return sess, nil
+		}
+	}
+
+	return nil, fmt.Errorf("session not found: %s", path)
 }

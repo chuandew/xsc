@@ -1,0 +1,871 @@
+package xftp
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/user/xsc/internal/session"
+)
+
+// Mode TUI 模式
+type Mode int
+
+const (
+	ModeNormal   Mode = iota // 普通模式
+	ModeSearch               // 搜索模式
+	ModeCommand              // 命令模式
+	ModeHelp                 // 帮助模式
+	ModeError                // 错误模式
+	ModeConfirm              // 确认对话框模式
+	ModeInput                // 输入对话框模式（mkdir/rename）
+	ModeSelector             // 会话选择器模式
+)
+
+// yankEntry yank 缓冲区条目
+type yankEntry struct {
+	Name  string // 文件名
+	Path  string // 完整路径
+	Size  int64
+	IsDir bool
+}
+
+// confirmEntry 确认对话框待操作条目
+type confirmEntry struct {
+	Name  string
+	Path  string
+	IsDir bool
+}
+
+// Model xftp 主 Model
+type Model struct {
+	localPanel  FilePanel
+	remotePanel FilePanel
+	activePanel PanelSide
+
+	session   *session.Session
+	remoteFS  *RemoteFS
+	connected bool
+
+	transfer *TransferManager
+
+	// yank 缓冲区：存储标记的文件信息
+	yankFiles []yankEntry
+	yankSide  PanelSide // yank 来源面板
+	yankDir   string    // yank 时的目录
+
+	mode      Mode
+	width     int
+	height    int
+	keys      KeyMap
+	statusMsg string
+	err       error
+
+	// 搜索
+	searchInput textinput.Model
+	searchQuery string // 当前生效的搜索词
+
+	// 确认对话框（delete）
+	confirmFiles []confirmEntry
+	confirmPanel PanelSide
+
+	// 输入对话框（mkdir/rename）
+	opInput      textinput.Model
+	inputOp      InputOp
+	inputPanel   PanelSide
+	inputOldName string // rename 时的原文件名
+
+	// 命令模式
+	cmdInput textinput.Model
+
+	// 会话选择器
+	selector Selector
+}
+
+// NewModel 创建 xftp Model
+// 如果 s 为 nil，进入会话选择器模式
+func NewModel(s *session.Session) Model {
+	// 搜索输入框
+	searchInput := textinput.New()
+	searchInput.Placeholder = "搜索文件..."
+	searchInput.Prompt = "/"
+	searchInput.CharLimit = 50
+	searchInput.Width = 30
+
+	// 操作输入框（mkdir/rename）
+	opInput := textinput.New()
+	opInput.CharLimit = 255
+	opInput.Width = 40
+
+	// 命令输入框
+	cmdInput := textinput.New()
+	cmdInput.Prompt = ":"
+	cmdInput.CharLimit = 50
+	cmdInput.Width = 30
+
+	// 如果没有指定 session，进入选择器模式
+	if s == nil {
+		return Model{
+			mode:        ModeSelector,
+			keys:        DefaultKeyMap(),
+			statusMsg:   "请选择会话",
+			searchInput: searchInput,
+			opInput:     opInput,
+			cmdInput:    cmdInput,
+			selector:    NewSelector(),
+		}
+	}
+
+	// 创建本地文件系统
+	localFS, err := NewLocalFS()
+	var localDir string
+	if err != nil {
+		localDir = "/"
+	} else {
+		localDir, _ = localFS.Getwd()
+	}
+
+	// 创建本地面板
+	var localPanel FilePanel
+	if err != nil {
+		// LocalFS 创建失败时用一个空面板
+		localPanel = NewFilePanel(PanelLeft, nil, localDir)
+		localPanel.err = err
+	} else {
+		localPanel = NewFilePanel(PanelLeft, localFS, localDir)
+	}
+
+	// 远程面板先创建空壳，连接成功后再初始化
+	remotePanel := NewFilePanel(PanelRight, nil, "/")
+
+	return Model{
+		localPanel:  localPanel,
+		remotePanel: remotePanel,
+		activePanel: PanelLeft,
+		session:     s,
+		transfer:    NewTransferManager(),
+		mode:        ModeNormal,
+		keys:        DefaultKeyMap(),
+		statusMsg:   "正在连接...",
+		searchInput: searchInput,
+		opInput:     opInput,
+		cmdInput:    cmdInput,
+	}
+}
+
+// Init 初始化（Bubble Tea 接口）
+func (m Model) Init() tea.Cmd {
+	if m.mode == ModeSelector {
+		return tea.Batch(
+			tea.EnterAltScreen,
+			m.selector.Init(),
+		)
+	}
+	return tea.Batch(
+		tea.EnterAltScreen,
+		m.localPanel.LoadDir(),
+		m.connectRemote(),
+	)
+}
+
+// connectRemote 异步建立远程连接
+func (m Model) connectRemote() tea.Cmd {
+	s := m.session
+	return func() tea.Msg {
+		remoteFS, err := NewRemoteFS(s)
+		if err != nil {
+			return ConnectErrMsg{Err: err}
+		}
+		return ConnectedMsg{RemoteFS: remoteFS}
+	}
+}
+
+// Update 处理消息（Bubble Tea 接口）
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		if m.mode == ModeSelector {
+			m.selector.SetSize(m.width, m.height)
+		} else {
+			m.updatePanelSizes()
+		}
+		return m, nil
+
+	case sessionsLoadedMsg:
+		// 路由到选择器
+		if m.mode == ModeSelector {
+			var cmd tea.Cmd
+			m.selector, cmd = m.selector.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+
+	case SessionSelectedMsg:
+		// 用户选择了 session，切换到文件管理模式
+		return m.handleSessionSelected(msg.Session)
+
+	case tea.KeyMsg:
+		return m.handleKey(msg)
+
+	case ConnectedMsg:
+		return m.handleConnected(msg)
+
+	case ConnectErrMsg:
+		m.statusMsg = fmt.Sprintf("连接失败: %v", msg.Err)
+		m.err = msg.Err
+		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg {
+			return errorDismissMsg{}
+		})
+
+	case DisconnectedMsg:
+		m.connected = false
+		m.statusMsg = "连接已断开"
+		return m, nil
+
+	case DirLoadedMsg:
+		return m.handleDirLoaded(msg)
+
+	case DirLoadErrMsg:
+		return m.handleDirLoadErr(msg)
+
+	case FileOpCompleteMsg:
+		m.statusMsg = fmt.Sprintf("操作完成: %s", msg.Op)
+		// 刷新两个面板
+		return m, tea.Batch(
+			m.localPanel.LoadDir(),
+			m.remotePanel.LoadDir(),
+		)
+
+	case FileOpErrorMsg:
+		m.statusMsg = fmt.Sprintf("操作失败: %s - %v", msg.Op, msg.Err)
+		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg {
+			return errorDismissMsg{}
+		})
+
+	case errorDismissMsg:
+		// 3 秒后自动清除错误状态
+		if m.err != nil {
+			m.err = nil
+			m.statusMsg = ""
+		}
+		return m, nil
+
+	case reconnectedMsg:
+		// 重连成功
+		if m.remoteFS != nil {
+			m.remoteFS.Close()
+		}
+		m.remoteFS = msg.RemoteFS
+		m.connected = true
+		m.statusMsg = "重连成功"
+		remoteCwd, err := msg.RemoteFS.Getwd()
+		if err != nil {
+			remoteCwd = "/"
+		}
+		m.remotePanel = NewFilePanel(PanelRight, msg.RemoteFS, remoteCwd)
+		m.updatePanelSizes()
+		return m, m.remotePanel.LoadDir()
+
+	case TransferProgressMsg:
+		m.statusMsg = fmt.Sprintf("传输中 %d%% (%s)",
+			int(msg.Progress*100), formatSize(msg.Transferred))
+		// 继续监听进度
+		return m, m.transfer.ListenProgress()
+
+	case TransferCompleteMsg:
+		m.statusMsg = "传输完成"
+		// 刷新两个面板
+		cmds := []tea.Cmd{
+			m.localPanel.LoadDir(),
+			m.remotePanel.LoadDir(),
+		}
+		// 如果还有等待的任务，继续执行
+		if m.transfer.HasPending() && m.remoteFS != nil {
+			cmds = append(cmds,
+				m.transfer.StartNext(m.remoteFS.SFTPClient()),
+				m.transfer.ListenProgress(),
+			)
+		}
+		return m, tea.Batch(cmds...)
+
+	case TransferErrorMsg:
+		m.statusMsg = fmt.Sprintf("传输失败: %v", msg.Err)
+		// 如果还有等待的任务，继续执行
+		if m.transfer.HasPending() && m.remoteFS != nil {
+			return m, tea.Batch(
+				m.transfer.StartNext(m.remoteFS.SFTPClient()),
+				m.transfer.ListenProgress(),
+			)
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// handleKey 处理键盘输入
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// 选择器模式：路由到选择器
+	if m.mode == ModeSelector {
+		var cmd tea.Cmd
+		m.selector, cmd = m.selector.Update(msg)
+		return m, cmd
+	}
+
+	// 搜索模式：优先处理
+	if m.mode == ModeSearch {
+		return m.handleSearchKey(msg)
+	}
+
+	// 确认对话框模式
+	if m.mode == ModeConfirm {
+		return m.handleConfirmKey(msg)
+	}
+
+	// 输入对话框模式
+	if m.mode == ModeInput {
+		return m.handleInputKey(msg)
+	}
+
+	// 帮助模式：任意键关闭
+	if m.mode == ModeHelp {
+		if key.Matches(msg, m.keys.Quit) {
+			return m, tea.Quit
+		}
+		m.mode = ModeNormal
+		return m, nil
+	}
+
+	// 错误模式：任意键关闭
+	if m.mode == ModeError {
+		m.mode = ModeNormal
+		m.err = nil
+		return m, nil
+	}
+
+	// 命令模式
+	if m.mode == ModeCommand {
+		return m.handleCommandKey(msg)
+	}
+
+	// 普通模式
+	switch {
+	case key.Matches(msg, m.keys.Quit):
+		return m, tea.Quit
+
+	case key.Matches(msg, m.keys.Help):
+		m.mode = ModeHelp
+		return m, nil
+
+	case key.Matches(msg, m.keys.Command):
+		m.mode = ModeCommand
+		m.cmdInput.SetValue("")
+		m.cmdInput.Focus()
+		return m, textinput.Blink
+
+	case key.Matches(msg, m.keys.Search):
+		m.mode = ModeSearch
+		m.searchInput.SetValue("")
+		m.searchInput.Focus()
+		return m, textinput.Blink
+
+	case key.Matches(msg, m.keys.SwitchPanel):
+		return m.switchPanel()
+
+	case key.Matches(msg, m.keys.Yank):
+		return m.handleYank()
+
+	case key.Matches(msg, m.keys.Paste):
+		return m.handlePaste()
+
+	case key.Matches(msg, m.keys.Delete):
+		return m.handleDelete()
+
+	case key.Matches(msg, m.keys.Mkdir):
+		return m.handleMkdir()
+
+	case key.Matches(msg, m.keys.Rename):
+		return m.handleRename()
+
+	default:
+		// 路由到激活面板
+		return m.routeToActivePanel(msg)
+	}
+}
+
+// handleSearchKey 处理搜索模式下的键盘输入
+func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		// 取消搜索，清除过滤
+		m.mode = ModeNormal
+		m.searchQuery = ""
+		m.searchInput.SetValue("")
+		m.searchInput.Blur()
+		m.activeFilterPanel().ClearFilter()
+		return m, nil
+
+	case tea.KeyEnter:
+		// 确认搜索
+		m.mode = ModeNormal
+		m.searchQuery = m.searchInput.Value()
+		m.searchInput.Blur()
+		// 过滤已在实时输入时应用
+		return m, nil
+
+	default:
+		// 更新输入框
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		// 实时过滤
+		m.searchQuery = m.searchInput.Value()
+		m.activeFilterPanel().ApplyFilter(m.searchQuery)
+		return m, cmd
+	}
+}
+
+// handleCommandKey 处理命令模式下的键盘输入
+func (m Model) handleCommandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		// 取消命令
+		m.mode = ModeNormal
+		m.cmdInput.SetValue("")
+		m.cmdInput.Blur()
+		return m, nil
+
+	case tea.KeyEnter:
+		// 执行命令
+		cmd := strings.TrimSpace(m.cmdInput.Value())
+		m.mode = ModeNormal
+		m.cmdInput.Blur()
+		return m.executeCommand(cmd)
+
+	default:
+		var cmd tea.Cmd
+		m.cmdInput, cmd = m.cmdInput.Update(msg)
+		return m, cmd
+	}
+}
+
+// executeCommand 执行命令模式输入的命令
+func (m Model) executeCommand(cmd string) (tea.Model, tea.Cmd) {
+	switch cmd {
+	case "q", "quit":
+		return m, tea.Quit
+
+	case "reconnect":
+		if m.session == nil {
+			m.statusMsg = "无活跃会话"
+			return m, nil
+		}
+		m.statusMsg = "正在重连..."
+		s := m.session
+		return m, func() tea.Msg {
+			remoteFS, err := NewRemoteFS(s)
+			if err != nil {
+				return ConnectErrMsg{Err: err}
+			}
+			return reconnectedMsg{RemoteFS: remoteFS}
+		}
+
+	default:
+		m.statusMsg = fmt.Sprintf("未知命令: %s", cmd)
+		return m, nil
+	}
+}
+
+// activeFilterPanel 返回当前激活面板的指针（用于修改）
+func (m *Model) activeFilterPanel() *FilePanel {
+	if m.activePanel == PanelLeft {
+		return &m.localPanel
+	}
+	return &m.remotePanel
+}
+
+// switchPanel 切换激活面板
+func (m Model) switchPanel() (tea.Model, tea.Cmd) {
+	if m.activePanel == PanelLeft {
+		m.activePanel = PanelRight
+	} else {
+		m.activePanel = PanelLeft
+	}
+	return m, nil
+}
+
+// routeToActivePanel 将键盘事件路由到激活面板
+func (m Model) routeToActivePanel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	if m.activePanel == PanelLeft {
+		m.localPanel, cmd = m.localPanel.Update(msg)
+	} else {
+		if !m.connected {
+			m.statusMsg = "远程面板未连接"
+			return m, nil
+		}
+		m.remotePanel, cmd = m.remotePanel.Update(msg)
+	}
+	return m, cmd
+}
+
+// handleConnected 处理连接成功
+func (m Model) handleConnected(msg ConnectedMsg) (tea.Model, tea.Cmd) {
+	m.remoteFS = msg.RemoteFS
+	m.connected = true
+	m.statusMsg = "已连接"
+
+	// 获取远程初始目录
+	remoteCwd, err := msg.RemoteFS.Getwd()
+	if err != nil {
+		remoteCwd = "/"
+	}
+
+	// 初始化远程面板
+	m.remotePanel = NewFilePanel(PanelRight, msg.RemoteFS, remoteCwd)
+	m.updatePanelSizes()
+
+	return m, m.remotePanel.LoadDir()
+}
+
+// handleDirLoaded 处理目录加载完成
+func (m Model) handleDirLoaded(msg DirLoadedMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	if msg.Panel == PanelLeft {
+		m.localPanel, cmd = m.localPanel.Update(msg)
+	} else {
+		m.remotePanel, cmd = m.remotePanel.Update(msg)
+	}
+	return m, cmd
+}
+
+// handleDirLoadErr 处理目录加载失败
+func (m Model) handleDirLoadErr(msg DirLoadErrMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	if msg.Panel == PanelLeft {
+		m.localPanel, cmd = m.localPanel.Update(msg)
+	} else {
+		m.remotePanel, cmd = m.remotePanel.Update(msg)
+	}
+	m.statusMsg = fmt.Sprintf("目录加载失败: %v", msg.Err)
+	return m, cmd
+}
+
+// updatePanelSizes 根据窗口大小更新面板尺寸
+func (m *Model) updatePanelSizes() {
+	if m.width == 0 || m.height == 0 {
+		return
+	}
+	// 面板各占一半宽度
+	panelWidth := m.width / 2
+	// 高度：减去状态栏(1)，如果有活跃传输再减去传输条(1)
+	reserved := 1
+	if m.transfer != nil && m.transfer.ActiveTask() != nil {
+		reserved = 2
+	}
+	panelHeight := m.height - reserved
+	if panelHeight < 3 {
+		panelHeight = 3
+	}
+	m.localPanel.SetSize(panelWidth, panelHeight)
+	m.remotePanel.SetSize(m.width-panelWidth, panelHeight)
+}
+
+// View 渲染界面（Bubble Tea 接口）
+func (m Model) View() string {
+	if m.width == 0 || m.height == 0 {
+		return "Loading..."
+	}
+
+	// 选择器模式
+	if m.mode == ModeSelector {
+		return m.selector.View(m.width, m.height)
+	}
+
+	// 帮助模式
+	if m.mode == ModeHelp {
+		return m.renderHelp()
+	}
+
+	// 错误弹窗
+	if m.mode == ModeError {
+		return m.renderError()
+	}
+
+	// 渲染双面板
+	leftView := m.renderPanel(PanelLeft)
+	rightView := m.renderPanel(PanelRight)
+
+	// 水平拼接两个面板
+	panels := lipgloss.JoinHorizontal(lipgloss.Top, leftView, rightView)
+
+	// 状态栏
+	statusBar := m.renderStatusBar()
+
+	// 命令模式显示命令栏
+	if m.mode == ModeCommand {
+		cmdBar := m.renderCmdBar()
+		return lipgloss.JoinVertical(lipgloss.Left, panels, statusBar, cmdBar)
+	}
+
+	// 搜索模式显示搜索栏
+	if m.mode == ModeSearch {
+		searchBar := m.renderSearchBar()
+		return lipgloss.JoinVertical(lipgloss.Left, panels, statusBar, searchBar)
+	}
+
+	// 确认对话框
+	if m.mode == ModeConfirm {
+		confirmBar := m.renderConfirmBar()
+		return lipgloss.JoinVertical(lipgloss.Left, panels, statusBar, confirmBar)
+	}
+
+	// 输入对话框
+	if m.mode == ModeInput {
+		inputBar := m.renderInputBar()
+		return lipgloss.JoinVertical(lipgloss.Left, panels, statusBar, inputBar)
+	}
+
+	// 传输进度条（如果有活跃传输）
+	transferBar := m.renderTransferBar()
+	if transferBar != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, panels, transferBar, statusBar)
+	}
+
+	// 垂直拼接
+	return lipgloss.JoinVertical(lipgloss.Left, panels, statusBar)
+}
+
+// renderSearchBar 渲染搜索栏
+func (m Model) renderSearchBar() string {
+	searchWithHint := m.searchInput.View() + "  (Esc:取消 Enter:确认)"
+	return SearchStyle.Width(m.width).Render(searchWithHint)
+}
+
+// renderConfirmBar 渲染确认对话框
+func (m Model) renderConfirmBar() string {
+	var msg string
+	if len(m.confirmFiles) == 1 {
+		msg = fmt.Sprintf("确认删除 \"%s\"？(y/n)", m.confirmFiles[0].Name)
+	} else {
+		msg = fmt.Sprintf("确认删除 %d 个文件？(y/n)", len(m.confirmFiles))
+	}
+	return ConfirmMsgStyle.Width(m.width).Padding(0, 1).Render(msg)
+}
+
+// renderInputBar 渲染输入对话框
+func (m Model) renderInputBar() string {
+	inputWithHint := m.opInput.View() + "  (Esc:取消 Enter:确认)"
+	return SearchStyle.Width(m.width).Render(inputWithHint)
+}
+
+// renderCmdBar 渲染命令栏
+func (m Model) renderCmdBar() string {
+	cmdWithHint := m.cmdInput.View() + "  " + CmdHintStyle.Render("(q:退出 reconnect:重连)")
+	return SearchStyle.Width(m.width).Render(cmdWithHint)
+}
+
+// renderPanel 渲染单个面板（含边框）
+func (m Model) renderPanel(side PanelSide) string {
+	var panel FilePanel
+	if side == PanelLeft {
+		panel = m.localPanel
+	} else {
+		panel = m.remotePanel
+	}
+
+	content := panel.View()
+
+	// 根据激活状态选择边框样式
+	var style lipgloss.Style
+	if side == m.activePanel {
+		style = ActivePanelStyle
+	} else {
+		style = InactivePanelStyle
+	}
+
+	return style.Render(content)
+}
+
+// renderStatusBar 渲染状态栏
+func (m Model) renderStatusBar() string {
+	// 左侧：连接信息 + 活跃面板路径和文件计数
+	var left string
+	if m.session != nil {
+		left = fmt.Sprintf(" %s@%s:%d",
+			m.session.User,
+			m.session.Host,
+			m.session.Port,
+		)
+	}
+
+	// 活跃面板信息
+	var panel *FilePanel
+	if m.activePanel == PanelLeft {
+		panel = &m.localPanel
+	} else {
+		panel = &m.remotePanel
+	}
+	fileCount := len(panel.entries)
+	selectedCount := len(panel.SelectedFiles())
+	if selectedCount > 0 {
+		left += fmt.Sprintf(" | %s [%d/%d]", panel.cwd, selectedCount, fileCount)
+	} else {
+		left += fmt.Sprintf(" | %s [%d]", panel.cwd, fileCount)
+	}
+
+	// 右侧：状态信息 + 帮助提示
+	right := fmt.Sprintf(" %s | ?:Help :q:Quit ", m.statusMsg)
+
+	// 中间填充
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 0 {
+		gap = 0
+	}
+
+	bar := left + strings.Repeat(" ", gap) + right
+
+	return StatusBarStyle.Width(m.width).Render(bar)
+}
+
+// renderHelp 渲染帮助视图
+func (m Model) renderHelp() string {
+	sections := []struct {
+		title string
+		keys  [][2]string
+	}{
+		{
+			title: "导航",
+			keys: [][2]string{
+				{"j/k", "上下移动"},
+				{"h/l", "折叠/展开目录"},
+				{"Ctrl+u/d", "半页滚动"},
+				{"gg/G", "跳顶/跳底"},
+				{"Tab", "切换面板"},
+				{"Enter", "进入目录"},
+				{"Backspace", "返回上级"},
+			},
+		},
+		{
+			title: "文件操作",
+			keys: [][2]string{
+				{"Space", "多选/取消"},
+				{"y", "标记传输"},
+				{"p", "粘贴/传输"},
+				{"D", "删除"},
+				{"r", "重命名"},
+				{"m", "创建目录"},
+			},
+		},
+		{
+			title: "命令模式（: 进入）",
+			keys: [][2]string{
+				{":q / :quit", "退出程序"},
+				{":reconnect", "重新连接远程"},
+			},
+		},
+		{
+			title: "其他",
+			keys: [][2]string{
+				{"?", "帮助"},
+				{"/", "搜索（实时过滤）"},
+				{":", "进入命令模式"},
+				{"Ctrl+c", "退出"},
+			},
+		},
+	}
+
+	var lines []string
+	lines = append(lines, HelpSectionStyle.Render("xftp 帮助"))
+	lines = append(lines, "")
+
+	for _, sec := range sections {
+		lines = append(lines, HelpSectionStyle.Render(sec.title))
+		for _, k := range sec.keys {
+			line := HelpKeyStyle.Render(k[0]) + HelpDescStyle.Render(k[1])
+			lines = append(lines, line)
+		}
+		lines = append(lines, "")
+	}
+
+	lines = append(lines, lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorFgDim)).
+		Render("按任意键返回..."))
+
+	return HelpContainerStyle.Render(strings.Join(lines, "\n"))
+}
+
+// renderError 渲染错误弹窗
+func (m Model) renderError() string {
+	errMsg := "未知错误"
+	if m.err != nil {
+		errMsg = m.err.Error()
+	}
+
+	style := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorRed)).
+		Background(lipgloss.Color(colorBg)).
+		Padding(1).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(colorRed))
+
+	return style.Render(errMsg + "\n\n按任意键返回...")
+}
+
+// handleSessionSelected 处理用户选择 session 后的状态转换
+func (m Model) handleSessionSelected(s *session.Session) (tea.Model, tea.Cmd) {
+	m.session = s
+	m.mode = ModeNormal
+	m.statusMsg = "正在连接..."
+
+	// 初始化本地文件系统和面板
+	localFS, err := NewLocalFS()
+	var localDir string
+	if err != nil {
+		localDir = "/"
+	} else {
+		localDir, _ = localFS.Getwd()
+	}
+
+	if err != nil {
+		m.localPanel = NewFilePanel(PanelLeft, nil, localDir)
+		m.localPanel.err = err
+	} else {
+		m.localPanel = NewFilePanel(PanelLeft, localFS, localDir)
+	}
+
+	m.remotePanel = NewFilePanel(PanelRight, nil, "/")
+	m.activePanel = PanelLeft
+	m.transfer = NewTransferManager()
+	m.updatePanelSizes()
+
+	return m, tea.Batch(
+		m.localPanel.LoadDir(),
+		m.connectRemote(),
+	)
+}
+
+// Run 启动 xftp TUI 程序
+func Run(s *session.Session) error {
+	m := NewModel(s)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+
+	finalModel, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("TUI 运行失败: %w", err)
+	}
+
+	// 清理远程连接
+	if fm, ok := finalModel.(Model); ok && fm.remoteFS != nil {
+		fm.remoteFS.Close()
+	}
+
+	return nil
+}
+

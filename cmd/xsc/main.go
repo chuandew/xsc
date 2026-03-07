@@ -79,22 +79,8 @@ func connectSession(sessionPath string) {
 		os.Exit(1)
 	}
 
-	// 尝试精确匹配
-	s, err := session.LoadSession(filepath.Join(sessionsDir, sessionPath+".yaml"))
+	s, err := session.FindSession(sessionsDir, sessionPath)
 	if err != nil {
-		// 尝试模糊匹配
-		sessions, _ := session.LoadAllSessions(sessionsDir)
-		for _, sess := range sessions {
-			relPath, _ := filepath.Rel(sessionsDir, sess.FilePath)
-			relPath = strings.TrimSuffix(relPath, ".yaml")
-			if strings.Contains(relPath, sessionPath) || sessionPath == filepath.Base(relPath) {
-				s = sess
-				break
-			}
-		}
-	}
-
-	if s == nil {
 		fmt.Fprintf(os.Stderr, "Session not found: %s\n", sessionPath)
 		os.Exit(1)
 	}

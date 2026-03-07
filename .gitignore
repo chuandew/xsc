@@ -32,3 +32,6 @@ Thumbs.db
 
 # Session files (may contain sensitive data)
 /sessions/
+
+# Dev team collaboration files
+.dev-team/
