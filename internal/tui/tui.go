@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -11,6 +10,7 @@ import (
 	"github.com/ketor/xsc/internal/session"
 	"github.com/ketor/xsc/internal/shared"
 	internalssh "github.com/ketor/xsc/internal/ssh"
+	"os"
 )
 
 // 样式定义

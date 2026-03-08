@@ -435,4 +435,3 @@ func TestGetSessionPath(t *testing.T) {
 		t.Errorf("GetSessionPath = %s, want group1/server", result)
 	}
 }
-

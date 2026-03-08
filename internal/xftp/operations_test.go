@@ -41,8 +41,8 @@ func TestValidateFileNameEdgeCases(t *testing.T) {
 		input   string
 		wantErr bool
 	}{
-		{"", false},              // 空字符串（由调用方检查）
-		{".", false},             // 当前目录
+		{"", false},             // 空字符串（由调用方检查）
+		{".", false},            // 当前目录
 		{"-", false},            // 连字符
 		{"file-name_v2", false}, // 常见命名
 		{"a/b/c", true},         // 多级路径
