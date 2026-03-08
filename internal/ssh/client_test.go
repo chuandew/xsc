@@ -254,10 +254,8 @@ func TestConnectUnsupportedAuthType(t *testing.T) {
 
 // TestListAgentKeysNoSocket 测试无 SSH Agent 时的行为
 func TestListAgentKeysNoSocket(t *testing.T) {
-	// 保存并清空 SSH_AUTH_SOCK
-	origSock := os.Getenv("SSH_AUTH_SOCK")
-	os.Setenv("SSH_AUTH_SOCK", "")
-	defer os.Setenv("SSH_AUTH_SOCK", origSock)
+	// 清空 SSH_AUTH_SOCK
+	t.Setenv("SSH_AUTH_SOCK", "")
 
 	_, err := ListAgentKeys()
 	if err == nil {

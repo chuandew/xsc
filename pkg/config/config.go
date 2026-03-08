@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -51,10 +52,16 @@ type MobaXtermConfig struct {
 	Password    string `yaml:"password"`
 }
 
-var globalConfig *GlobalConfig
+var (
+	globalConfig *GlobalConfig
+	configMu     sync.Mutex
+)
 
 // LoadGlobalConfig 加载全局配置
 func LoadGlobalConfig() (*GlobalConfig, error) {
+	configMu.Lock()
+	defer configMu.Unlock()
+
 	if globalConfig != nil {
 		return globalConfig, nil
 	}
@@ -67,7 +74,7 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 	configPath := filepath.Join(configDir, "config.yaml")
 
 	// 默认配置
-	globalConfig = &GlobalConfig{
+	cfg := &GlobalConfig{
 		SecureCRT: SecureCRTConfig{
 			Enabled:     false,
 			SessionPath: filepath.Join(configDir, "securecrt_sessions"),
@@ -96,11 +103,12 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 			return nil, err
 		}
 
-		if err := yaml.Unmarshal(data, globalConfig); err != nil {
+		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, err
 		}
 	}
 
+	globalConfig = cfg
 	return globalConfig, nil
 }
 
@@ -122,8 +130,17 @@ func SaveGlobalConfig(config *GlobalConfig) error {
 		return err
 	}
 
+	configMu.Lock()
 	globalConfig = config
+	configMu.Unlock()
 	return nil
+}
+
+// ResetForTesting 安全重置全局配置（仅供测试使用）
+func ResetForTesting() {
+	configMu.Lock()
+	globalConfig = nil
+	configMu.Unlock()
 }
 
 // GetSessionsDir 返回会话目录路径

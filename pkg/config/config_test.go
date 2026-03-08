@@ -8,18 +8,12 @@ import (
 
 func TestLoadGlobalConfig(t *testing.T) {
 	// 重置全局配置缓存
-	globalConfig = nil
+	ResetForTesting()
 
 	// 使用临时目录隔离，避免加载用户真实配置
-	tmpDir, err := os.MkdirTemp("", "xsc-config-default-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	// 测试配置文件不存在的情况（应返回默认配置）
 	cfg, err := LoadGlobalConfig()
@@ -39,21 +33,15 @@ func TestLoadGlobalConfig(t *testing.T) {
 	}
 
 	// 重置以避免影响其他测试
-	globalConfig = nil
+	ResetForTesting()
 }
 
 func TestSaveAndLoadGlobalConfig(t *testing.T) {
 	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "xsc-config-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// 设置临时配置目录
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	// 创建配置
 	strictHostKey := false
@@ -70,7 +58,7 @@ func TestSaveAndLoadGlobalConfig(t *testing.T) {
 	}
 
 	// 保存配置
-	err = SaveGlobalConfig(cfg)
+	err := SaveGlobalConfig(cfg)
 	if err != nil {
 		t.Fatalf("Failed to save config: %v", err)
 	}
@@ -98,15 +86,9 @@ func TestSaveAndLoadGlobalConfig(t *testing.T) {
 
 func TestGetSessionsDir(t *testing.T) {
 	// 设置临时 home 目录
-	tmpDir, err := os.MkdirTemp("", "xsc-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	sessionsDir, err := GetSessionsDir()
 	if err != nil {
@@ -126,15 +108,9 @@ func TestGetSessionsDir(t *testing.T) {
 
 func TestGetConfigDir(t *testing.T) {
 	// 设置临时 home 目录
-	tmpDir, err := os.MkdirTemp("", "xsc-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
-	originalHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", originalHome)
+	t.Setenv("HOME", tmpDir)
 
 	configDir, err := GetConfigDir()
 	if err != nil {
