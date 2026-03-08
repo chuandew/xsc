@@ -245,8 +245,8 @@ func TestDecryptPassword_Empty(t *testing.T) {
 	}
 }
 
-// TestConvertToXSCSession_WithPassword 测试有密码的会话转换
-func TestConvertToXSCSession_WithPassword(t *testing.T) {
+// TestConvertToXSSHSession_WithPassword 测试有密码的会话转换
+func TestConvertToXSSHSession_WithPassword(t *testing.T) {
 	session := &Session{
 		Name:              "test-server",
 		Hostname:          "192.168.1.1",
@@ -255,7 +255,7 @@ func TestConvertToXSCSession_WithPassword(t *testing.T) {
 		EncryptedPassword: "encrypted_data",
 	}
 
-	result := session.ConvertToXSCSession()
+	result := session.ConvertToXSSHSession()
 
 	if result["host"] != "192.168.1.1" {
 		t.Errorf("host 期望 '192.168.1.1'，得到 '%s'", result["host"])
@@ -274,8 +274,8 @@ func TestConvertToXSCSession_WithPassword(t *testing.T) {
 	}
 }
 
-// TestConvertToXSCSession_WithoutPassword 测试无密码的会话转换
-func TestConvertToXSCSession_WithoutPassword(t *testing.T) {
+// TestConvertToXSSHSession_WithoutPassword 测试无密码的会话转换
+func TestConvertToXSSHSession_WithoutPassword(t *testing.T) {
 	session := &Session{
 		Name:     "test-server",
 		Hostname: "10.0.0.1",
@@ -283,15 +283,15 @@ func TestConvertToXSCSession_WithoutPassword(t *testing.T) {
 		Username: "admin",
 	}
 
-	result := session.ConvertToXSCSession()
+	result := session.ConvertToXSSHSession()
 
 	if result["auth_type"] != "agent" {
 		t.Errorf("auth_type 期望 'agent'，得到 '%s'", result["auth_type"])
 	}
 }
 
-// TestConvertToXSCSession_WithDecryptedPassword 测试已解密密码的会话转换
-func TestConvertToXSCSession_WithDecryptedPassword(t *testing.T) {
+// TestConvertToXSSHSession_WithDecryptedPassword 测试已解密密码的会话转换
+func TestConvertToXSSHSession_WithDecryptedPassword(t *testing.T) {
 	session := &Session{
 		Hostname:          "10.0.0.1",
 		Port:              22,
@@ -300,7 +300,7 @@ func TestConvertToXSCSession_WithDecryptedPassword(t *testing.T) {
 		EncryptedPassword: "encrypted_data",
 	}
 
-	result := session.ConvertToXSCSession()
+	result := session.ConvertToXSSHSession()
 
 	if result["password"] != "decrypted_pwd" {
 		t.Errorf("password 期望 'decrypted_pwd'，得到 '%s'", result["password"])

@@ -59,6 +59,14 @@ type TransferErrorMsg struct {
 	Err    error
 }
 
+// TransferResultMsg 所有排队传输完成后的汇总通知
+type TransferResultMsg struct {
+	Files      int
+	Dirs       int
+	TotalBytes int64
+	Failed     int
+}
+
 // 文件操作相关消息
 
 // FileOpCompleteMsg 文件操作完成

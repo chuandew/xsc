@@ -471,8 +471,8 @@ has-host=0%10.0.0.1%22%root%#font
 	}
 }
 
-// TestConvertToXSCSession 测试会话格式转换（有密码）
-func TestConvertToXSCSession(t *testing.T) {
+// TestConvertToXSSHSession 测试会话格式转换（有密码）
+func TestConvertToXSSHSession(t *testing.T) {
 	session := &Session{
 		Name:              "test-server",
 		Hostname:          "192.168.1.1",
@@ -482,7 +482,7 @@ func TestConvertToXSCSession(t *testing.T) {
 		EncryptedPassword: "encrypted_data",
 	}
 
-	result := session.ConvertToXSCSession()
+	result := session.ConvertToXSSHSession()
 
 	if result["host"] != "192.168.1.1" {
 		t.Errorf("host 期望 '192.168.1.1'，得到 %q", result["host"])
@@ -504,8 +504,8 @@ func TestConvertToXSCSession(t *testing.T) {
 	}
 }
 
-// TestConvertToXSCSessionNoPassword 测试无密码时 auth_type 为 agent
-func TestConvertToXSCSessionNoPassword(t *testing.T) {
+// TestConvertToXSSHSessionNoPassword 测试无密码时 auth_type 为 agent
+func TestConvertToXSSHSessionNoPassword(t *testing.T) {
 	session := &Session{
 		Name:     "agent-server",
 		Hostname: "10.0.0.5",
@@ -513,7 +513,7 @@ func TestConvertToXSCSessionNoPassword(t *testing.T) {
 		Username: "admin",
 	}
 
-	result := session.ConvertToXSCSession()
+	result := session.ConvertToXSSHSession()
 
 	if result["auth_type"] != "agent" {
 		t.Errorf("auth_type 期望 'agent'，得到 %q", result["auth_type"])

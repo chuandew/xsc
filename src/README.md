@@ -1,6 +1,6 @@
 # 源代码目录
 
-本目录包含 XSC 功能的实际实现。
+本目录包含 XSSH 功能的实际实现。
 
 ## 开发原则
 
@@ -19,7 +19,7 @@
 ## 项目结构
 
 ```
-├── cmd/xsc/           # 应用程序入口
+├── cmd/xssh/           # 应用程序入口
 │   └── main.go        # 主程序
 ├── internal/          # 内部包
 │   ├── session/       # 会话管理
@@ -33,7 +33,7 @@
 
 ## 包说明
 
-- **cmd/xsc** - 命令行入口，处理参数解析和命令分发
+- **cmd/xssh** - 命令行入口，处理参数解析和命令分发
 - **internal/session** - 会话管理（加载、保存、验证）
 - **internal/ssh** - SSH 客户端实现（纯 Go）
 - **internal/tui** - Bubble Tea TUI 实现

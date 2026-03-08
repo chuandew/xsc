@@ -1,4 +1,4 @@
-# XSC - SSH Session Manager CLI
+# XSSH - SSH Session Manager CLI
 # 功能规范文档 (Gherkin 格式)
 
 Feature: TUI 模式下的 SSH 会话管理
@@ -7,13 +7,13 @@ Feature: TUI 模式下的 SSH 会话管理
   以便快速连接和管理服务器
 
   Background:
-    Given XSC 已安装配置
+    Given XSSH 已安装配置
     And 会话目录 ~/.xsc/sessions/ 存在
 
   # ========== 基础导航 ==========
   
   Scenario: 启动 TUI 模式
-    When 用户运行 "xsc tui"
+    When 用户运行 "xssh tui"
     Then 显示 TUI 界面
     And 显示会话树形列表
     And 显示底部状态栏
@@ -277,30 +277,30 @@ Feature: 命令行模式
   以便在脚本中使用
 
   Scenario: 列出所有会话
-    When 用户运行 "xsc list"
+    When 用户运行 "xssh list"
     Then 输出所有会话路径
     And 每行一个会话
     And 格式为 "folder/subfolder/session-name"
 
   Scenario: 连接到指定会话
     Given 存在会话 "prod/db/master"
-    When 用户运行 "xsc connect prod/db/master"
+    When 用户运行 "xssh connect prod/db/master"
     Then 建立 SSH 连接到该会话
     And 进入交互式终端
 
   Scenario: 模糊匹配连接
     Given 存在会话 "prod/web-server"
-    When 用户运行 "xsc connect web"
+    When 用户运行 "xssh connect web"
     Then 模糊匹配到 "prod/web-server"
     And 建立 SSH 连接
 
   Scenario: 导入 SecureCRT 会话
     Given 配置了 SecureCRT 路径
     And 存在 SecureCRT 会话
-    When 用户运行 "xsc import-securecrt"
+    When 用户运行 "xssh import-securecrt"
     Then 读取所有 SecureCRT 会话
     And 解密密码（使用配置的 master password）
-    And 转换为 xsc 格式
+    And 转换为 xssh 格式
     And 保存到 ~/.xsc/sessions/securecrt-converted/YYYYMMDD-HHMMSS/
     And 保持原有目录结构
     And 显示转换统计 "✓ Converted: N | ✗ Errors: M"
@@ -376,7 +376,7 @@ Feature: 全局配置管理
         strict_host_key: false
         known_hosts_file: "~/.ssh/known_hosts"
       """
-    When 启动 XSC
+    When 启动 XSSH
     Then 加载 SecureCRT 配置
     And 禁用严格主机密钥验证
 

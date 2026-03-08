@@ -231,76 +231,31 @@ func GetSessionPath(rootDir string, session *Session) string {
 	return strings.TrimSuffix(relPath, ".yaml")
 }
 
-// LoadSecureCRTSessions 加载 SecureCRT 会话
-func LoadSecureCRTSessions(cfg config.SecureCRTConfig) (*SessionNode, error) {
-	if !cfg.Enabled {
-		return nil, nil
-	}
+// importedSessionEntry 表示从外部来源导入的单个会话条目
+type importedSessionEntry struct {
+	Name    string
+	Folder  string
+	Session *Session
+}
 
-	scConfig := securecrt.Config{
-		SessionPath: cfg.SessionPath,
-		Password:    cfg.Password,
-	}
-
-	sessions, err := securecrt.LoadSessions(scConfig)
-	if err != nil {
-		return nil, err
-	}
-
+// buildImportedTree 通用的导入会话树构建函数
+func buildImportedTree(rootName string, entries []importedSessionEntry) *SessionNode {
 	root := &SessionNode{
-		Name:     "securecrt",
+		Name:     rootName,
 		IsDir:    true,
 		Expanded: true,
 		Children: make([]*SessionNode, 0),
 	}
 
-	for _, scSession := range sessions {
-		sessionData := scSession.ConvertToXSCSession()
-		session := &Session{
-			Host:           sessionData["host"].(string),
-			Port:           sessionData["port"].(int),
-			User:           sessionData["user"].(string),
-			AuthType:       AuthType(sessionData["auth_type"].(string)),
-			Valid:          true,
-			PasswordSource: "securecrt",
-		}
-
-		// 处理认证方法列表
-		if authMethods, ok := sessionData["auth_methods"].([]securecrt.AuthMethod); ok {
-			for _, am := range authMethods {
-				authMethod := AuthMethod{
-					Type:     am.Type,
-					Priority: am.Priority,
-					KeyPath:  am.KeyFile,
-				}
-				// 如果是密码认证且有加密密码，保存加密密码用于延迟解密
-				if am.Type == "password" && am.Password != "" {
-					authMethod.EncryptedPassword = am.Password
-					session.MasterPassword = cfg.Password
-				}
-				session.AuthMethods = append(session.AuthMethods, authMethod)
-			}
-		}
-
-		// 向后兼容：处理单一认证方式
-		if pwd, ok := sessionData["password"].(string); ok && pwd != "" {
-			session.Password = pwd
-		}
-
-		// 保存加密密码和主密码，用于延迟解密
-		if ep, ok := sessionData["encrypted_password"].(string); ok && ep != "" {
-			session.EncryptedPassword = ep
-			session.MasterPassword = cfg.Password
-		}
-
+	for _, entry := range entries {
 		node := &SessionNode{
-			Name:    scSession.Name,
+			Name:    entry.Name,
 			IsDir:   false,
-			Session: session,
+			Session: entry.Session,
 		}
 
-		if scSession.Folder != "" {
-			folderPath := strings.Split(scSession.Folder, string(filepath.Separator))
+		if entry.Folder != "" {
+			folderPath := strings.Split(entry.Folder, string(filepath.Separator))
 			current := root
 
 			for _, folderName := range folderPath {
@@ -329,7 +284,84 @@ func LoadSecureCRTSessions(cfg config.SecureCRTConfig) (*SessionNode, error) {
 		}
 	}
 
-	return root, nil
+	return root
+}
+
+// convertSessionData 从 sessionData map 中提取通用会话字段
+func convertSessionData(sessionData map[string]interface{}, passwordSource, masterPassword string) *Session {
+	host, _ := sessionData["host"].(string)
+	port, _ := sessionData["port"].(int)
+	user, _ := sessionData["user"].(string)
+	authTypeStr, _ := sessionData["auth_type"].(string)
+
+	s := &Session{
+		Host:           host,
+		Port:           port,
+		User:           user,
+		AuthType:       AuthType(authTypeStr),
+		Valid:          true,
+		PasswordSource: passwordSource,
+	}
+
+	// 处理已解密的密码
+	if pwd, ok := sessionData["password"].(string); ok && pwd != "" {
+		s.Password = pwd
+	}
+
+	// 保存加密密码和主密码，用于延迟解密
+	if ep, ok := sessionData["encrypted_password"].(string); ok && ep != "" {
+		s.EncryptedPassword = ep
+		s.MasterPassword = masterPassword
+	}
+
+	return s
+}
+
+// LoadSecureCRTSessions 加载 SecureCRT 会话
+func LoadSecureCRTSessions(cfg config.SecureCRTConfig) (*SessionNode, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+
+	scConfig := securecrt.Config{
+		SessionPath: cfg.SessionPath,
+		Password:    cfg.Password,
+	}
+
+	sessions, err := securecrt.LoadSessions(scConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	var entries []importedSessionEntry
+	for _, scSession := range sessions {
+		sessionData := scSession.ConvertToXSSHSession()
+		s := convertSessionData(sessionData, "securecrt", cfg.Password)
+
+		// SecureCRT 特有：处理认证方法列表
+		if authMethods, ok := sessionData["auth_methods"].([]securecrt.AuthMethod); ok {
+			for _, am := range authMethods {
+				authMethod := AuthMethod{
+					Type:     am.Type,
+					Priority: am.Priority,
+					KeyPath:  am.KeyFile,
+				}
+				if am.Type == "password" && am.Password != "" {
+					authMethod.EncryptedPassword = am.Password
+					s.MasterPassword = cfg.Password
+				}
+				s.AuthMethods = append(s.AuthMethods, authMethod)
+			}
+		}
+
+		entries = append(entries, importedSessionEntry{
+			Name:    scSession.Name,
+			Folder:  scSession.Folder,
+			Session: s,
+		})
+	}
+
+	return buildImportedTree("securecrt", entries), nil
 }
 
 // LoadMobaXtermSessions 加载 MobaXterm 会话
@@ -348,72 +380,17 @@ func LoadMobaXtermSessions(cfg config.MobaXtermConfig) (*SessionNode, error) {
 		return nil, err
 	}
 
-	root := &SessionNode{
-		Name:     "mobaxterm",
-		IsDir:    true,
-		Expanded: true,
-		Children: make([]*SessionNode, 0),
-	}
-
+	var entries []importedSessionEntry
 	for _, mxSession := range sessions {
-		sessionData := mxSession.ConvertToXSCSession()
-		session := &Session{
-			Host:           sessionData["host"].(string),
-			Port:           sessionData["port"].(int),
-			User:           sessionData["user"].(string),
-			AuthType:       AuthType(sessionData["auth_type"].(string)),
-			Valid:          true,
-			PasswordSource: "mobaxterm",
-		}
-
-		// 处理已解密的密码
-		if pwd, ok := sessionData["password"].(string); ok && pwd != "" {
-			session.Password = pwd
-		}
-
-		// 保存加密密码和主密码，用于延迟解密
-		if ep, ok := sessionData["encrypted_password"].(string); ok && ep != "" {
-			session.EncryptedPassword = ep
-			session.MasterPassword = cfg.Password
-		}
-
-		node := &SessionNode{
+		sessionData := mxSession.ConvertToXSSHSession()
+		entries = append(entries, importedSessionEntry{
 			Name:    mxSession.Name,
-			IsDir:   false,
-			Session: session,
-		}
-
-		if mxSession.Folder != "" {
-			folderPath := strings.Split(mxSession.Folder, string(filepath.Separator))
-			current := root
-
-			for _, folderName := range folderPath {
-				var found *SessionNode
-				for _, child := range current.Children {
-					if child.IsDir && child.Name == folderName {
-						found = child
-						break
-					}
-				}
-
-				if found == nil {
-					found = &SessionNode{
-						Name:     folderName,
-						IsDir:    true,
-						Children: make([]*SessionNode, 0),
-					}
-					current.Children = append(current.Children, found)
-				}
-				current = found
-			}
-
-			current.Children = append(current.Children, node)
-		} else {
-			root.Children = append(root.Children, node)
-		}
+			Folder:  mxSession.Folder,
+			Session: convertSessionData(sessionData, "mobaxterm", cfg.Password),
+		})
 	}
 
-	return root, nil
+	return buildImportedTree("mobaxterm", entries), nil
 }
 
 // LoadXShellSessions 加载 XShell 会话
@@ -432,70 +409,15 @@ func LoadXShellSessions(cfg config.XShellConfig) (*SessionNode, error) {
 		return nil, err
 	}
 
-	root := &SessionNode{
-		Name:     "xshell",
-		IsDir:    true,
-		Expanded: true,
-		Children: make([]*SessionNode, 0),
-	}
-
+	var entries []importedSessionEntry
 	for _, xsSession := range sessions {
-		sessionData := xsSession.ConvertToXSCSession()
-		session := &Session{
-			Host:           sessionData["host"].(string),
-			Port:           sessionData["port"].(int),
-			User:           sessionData["user"].(string),
-			AuthType:       AuthType(sessionData["auth_type"].(string)),
-			Valid:          true,
-			PasswordSource: "xshell",
-		}
-
-		// 处理已解密的密码
-		if pwd, ok := sessionData["password"].(string); ok && pwd != "" {
-			session.Password = pwd
-		}
-
-		// 保存加密密码和主密码，用于延迟解密
-		if ep, ok := sessionData["encrypted_password"].(string); ok && ep != "" {
-			session.EncryptedPassword = ep
-			session.MasterPassword = cfg.Password
-		}
-
-		node := &SessionNode{
+		sessionData := xsSession.ConvertToXSSHSession()
+		entries = append(entries, importedSessionEntry{
 			Name:    xsSession.Name,
-			IsDir:   false,
-			Session: session,
-		}
-
-		if xsSession.Folder != "" {
-			folderPath := strings.Split(xsSession.Folder, string(filepath.Separator))
-			current := root
-
-			for _, folderName := range folderPath {
-				var found *SessionNode
-				for _, child := range current.Children {
-					if child.IsDir && child.Name == folderName {
-						found = child
-						break
-					}
-				}
-
-				if found == nil {
-					found = &SessionNode{
-						Name:     folderName,
-						IsDir:    true,
-						Children: make([]*SessionNode, 0),
-					}
-					current.Children = append(current.Children, found)
-				}
-				current = found
-			}
-
-			current.Children = append(current.Children, node)
-		} else {
-			root.Children = append(root.Children, node)
-		}
+			Folder:  xsSession.Folder,
+			Session: convertSessionData(sessionData, "xshell", cfg.Password),
+		})
 	}
 
-	return root, nil
+	return buildImportedTree("xshell", entries), nil
 }

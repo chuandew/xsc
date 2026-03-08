@@ -36,9 +36,9 @@ const (
 
 // 传输常量
 const (
-	transferBufSize    = 32 * 1024       // 32KB 缓冲区
+	transferBufSize    = 32 * 1024              // 32KB 缓冲区
 	progressInterval   = 100 * time.Millisecond // 进度更新间隔
-	speedWindowSeconds = 5               // 速度计算滑动窗口（秒）
+	speedWindowSeconds = 5                      // 速度计算滑动窗口（秒）
 )
 
 // TransferTask 传输任务
@@ -63,6 +63,12 @@ type TransferManager struct {
 	cancelFn   context.CancelFunc
 	progressCh chan progressUpdate
 	mu         sync.Mutex
+
+	// 传输统计（跨任务累积）
+	totalFiles  int
+	totalDirs   int
+	totalBytes  int64
+	failedCount int
 }
 
 // progressUpdate 内部进度更新结构
@@ -258,6 +264,38 @@ func (tm *TransferManager) ClearCompleted() {
 	tm.tasks = remaining
 }
 
+// ResetStats 重置传输统计
+func (tm *TransferManager) ResetStats() {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.totalFiles = 0
+	tm.totalDirs = 0
+	tm.totalBytes = 0
+	tm.failedCount = 0
+}
+
+// Stats 返回传输统计
+func (tm *TransferManager) Stats() (files, dirs int, bytes int64, failed int) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	return tm.totalFiles, tm.totalDirs, tm.totalBytes, tm.failedCount
+}
+
+// RecordFileComplete 记录一个文件传输完成
+func (tm *TransferManager) RecordFileComplete(size int64) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.totalFiles++
+	tm.totalBytes += size
+}
+
+// RecordFailed 记录一个传输失败
+func (tm *TransferManager) RecordFailed() {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.failedCount++
+}
+
 // doUpload 执行上传：本地文件 → 远程
 func doUpload(ctx context.Context, src, dest string, client *sftp.Client, taskID int, ch chan<- progressUpdate) error {
 	srcFile, err := os.Open(src)
@@ -341,7 +379,7 @@ func (m Model) renderTransferBar() string {
 	if filled > barWidth {
 		filled = barWidth
 	}
-	bar := ProgressFilledStyle.Render(strings.Repeat("=", filled) + ">") +
+	bar := ProgressFilledStyle.Render(strings.Repeat("=", filled)+">") +
 		ProgressEmptyStyle.Render(strings.Repeat(" ", barWidth-filled))
 
 	// 大小信息

@@ -54,6 +54,6 @@ go test -v -cover ./...
 
 ## 测试规范对应
 
-- `../specs/xsc.feature` - XSC 功能规范
+- `../specs/xssh.feature` - XSSH 功能规范
 - 每个 Scenario 应该对应一个或多个测试用例
 - 保持测试与规范同步更新

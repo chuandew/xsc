@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -150,5 +151,119 @@ func TestDialMultipleAuthConfig(t *testing.T) {
 	}
 	if len(config.Auth) != 1 {
 		t.Errorf("期望 1 个认证方法，实际: %d", len(config.Auth))
+	}
+}
+
+// TestGetHostKeyCallback 测试主机密钥回调创建
+func TestGetHostKeyCallback(t *testing.T) {
+	// getHostKeyCallback 应该不 panic
+	callback := getHostKeyCallback()
+	if callback == nil {
+		t.Fatal("getHostKeyCallback 不应返回 nil")
+	}
+}
+
+// TestAppendHostKey 测试主机密钥追加（最佳努力）
+func TestAppendHostKey(t *testing.T) {
+	// 使用临时文件测试
+	tmpFile, err := os.CreateTemp("", "known_hosts_test")
+	if err != nil {
+		t.Fatalf("创建临时文件失败: %v", err)
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	// appendHostKey 不应 panic（即使参数无效）
+	appendHostKey("/nonexistent/path", nil, nil)
+
+	// 使用有效路径但 nil key 也不应 panic
+	// 注意：实际写入会失败因为 key 为 nil，但不应 panic
+	// 这只是验证函数的鲁棒性
+}
+
+// TestFindDefaultSSHKeys 测试默认 SSH 密钥查找
+func TestFindDefaultSSHKeys(t *testing.T) {
+	// 函数不应 panic
+	keys := findDefaultSSHKeys()
+	// 结果取决于环境，但不应 panic
+	_ = keys
+}
+
+// TestDialKeyboardInteractiveConfig 测试键盘交互认证配置
+func TestDialKeyboardInteractiveConfig(t *testing.T) {
+	s := &session.Session{
+		Host:  "192.168.1.1",
+		Port:  22,
+		User:  "testuser",
+		Valid: true,
+	}
+
+	authMethod := session.AuthMethod{
+		Type:     "keyboard-interactive",
+		Password: "testpass",
+	}
+
+	config, cleanup, err := getSSHConfigForAuthMethod(s, authMethod)
+	if err != nil {
+		t.Fatalf("getSSHConfigForAuthMethod 失败: %v", err)
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	if len(config.Auth) != 1 {
+		t.Errorf("期望 1 个认证方法，实际: %d", len(config.Auth))
+	}
+}
+
+// TestConnectInvalidSession 测试无效会话连接
+func TestConnectInvalidSession(t *testing.T) {
+	s := &session.Session{
+		Valid: false,
+		Error: fmt.Errorf("test error"),
+	}
+
+	err := Connect(s)
+	if err == nil {
+		t.Fatal("期望返回错误")
+	}
+	if !strings.Contains(err.Error(), "invalid session") {
+		t.Errorf("错误消息应包含 'invalid session'，实际: %s", err.Error())
+	}
+}
+
+// TestConnectUnsupportedAuthType 测试不支持的认证类型
+func TestConnectUnsupportedAuthType(t *testing.T) {
+	s := &session.Session{
+		Host:     "192.168.1.1",
+		Port:     22,
+		User:     "testuser",
+		AuthType: session.AuthType("unknown"),
+		Valid:    true,
+	}
+
+	err := Connect(s)
+	if err == nil {
+		t.Fatal("期望返回错误")
+	}
+	if !strings.Contains(err.Error(), "unsupported auth type") {
+		t.Errorf("错误消息应包含 'unsupported auth type'，实际: %s", err.Error())
+	}
+}
+
+// TestListAgentKeysNoSocket 测试无 SSH Agent 时的行为
+func TestListAgentKeysNoSocket(t *testing.T) {
+	// 保存并清空 SSH_AUTH_SOCK
+	origSock := os.Getenv("SSH_AUTH_SOCK")
+	os.Setenv("SSH_AUTH_SOCK", "")
+	defer os.Setenv("SSH_AUTH_SOCK", origSock)
+
+	_, err := ListAgentKeys()
+	if err == nil {
+		t.Fatal("无 SSH_AUTH_SOCK 时应返回错误")
+	}
+	if !strings.Contains(err.Error(), "SSH_AUTH_SOCK not set") {
+		t.Errorf("错误消息应包含 'SSH_AUTH_SOCK not set'，实际: %s", err.Error())
 	}
 }

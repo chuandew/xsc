@@ -157,14 +157,15 @@ func TestStatusBarShowsPWIndicator(t *testing.T) {
 	m.height = 40
 
 	// showPassword=false 时不应显示 [PW]
-	bar := m.renderStatusBar()
+	visibleNodes := m.getVisibleNodes()
+	bar := m.renderStatusBar(visibleNodes)
 	if strings.Contains(bar, "[PW]") {
 		t.Error("[PW] should not appear when showPassword is false")
 	}
 
 	// showPassword=true 时应显示 [PW]
 	m.showPassword = true
-	bar = m.renderStatusBar()
+	bar = m.renderStatusBar(visibleNodes)
 	if !strings.Contains(bar, "[PW]") {
 		t.Error("[PW] should appear when showPassword is true")
 	}

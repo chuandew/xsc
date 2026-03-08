@@ -4,6 +4,7 @@ package xshell
 import (
 	"crypto/rc4"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -79,8 +80,8 @@ func DecryptPassword(encryptedBase64, masterPassword string) (string, error) {
 	return decryptRC4Password(encryptedBase64, masterPassword)
 }
 
-// ConvertToXSCSession 将 Xshell 会话转换为 xsc 会话格式
-func (s *Session) ConvertToXSCSession() map[string]interface{} {
+// ConvertToXSSHSession 将 Xshell 会话转换为 xssh 会话格式
+func (s *Session) ConvertToXSSHSession() map[string]interface{} {
 	result := map[string]interface{}{
 		"host": s.Hostname,
 		"port": s.Port,
@@ -285,12 +286,10 @@ func decryptRC4Password(encryptedBase64, masterPassword string) (string, error) 
 	plaintext := make([]byte, len(ciphertext))
 	cipher.XORKeyStream(plaintext, ciphertext)
 
-	// SHA256(plaintext) 与校验和比对
+	// SHA256(plaintext) 与校验和比对（constant-time 比较防止时序攻击）
 	expected := sha256.Sum256(plaintext)
-	for i := 0; i < sha256.Size; i++ {
-		if checksum[i] != expected[i] {
-			return "", fmt.Errorf("校验失败: 主密码可能不正确")
-		}
+	if subtle.ConstantTimeCompare(checksum, expected[:]) != 1 {
+		return "", fmt.Errorf("校验失败: 主密码可能不正确")
 	}
 
 	return string(plaintext), nil

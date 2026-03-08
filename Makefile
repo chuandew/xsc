@@ -1,14 +1,15 @@
 .PHONY: build build-xftp build-all clean install run run-xftp test
 
-BINARY_NAME=xsc
+BINARY_NAME=xssh
 BINARY_XFTP=xftp
 BUILD_DIR=./build
 INSTALL_DIR=/usr/local/bin
 
-# 构建 xsc
+# 构建 xssh 和 xftp
 build:
 	mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/xsc
+	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/xssh
+	go build -o $(BUILD_DIR)/$(BINARY_XFTP) ./cmd/xftp
 
 # 构建 xftp
 build-xftp:
@@ -22,19 +23,19 @@ build-all: build build-xftp
 clean:
 	rm -rf $(BUILD_DIR)
 
-# 安装到系统
-install: build-all
-	cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/
-	cp $(BUILD_DIR)/$(BINARY_XFTP) $(INSTALL_DIR)/
+# 安装到系统（先 make build，再 sudo make install）
+install:
+	install -m 755 $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/
+	install -m 755 $(BUILD_DIR)/$(BINARY_XFTP) $(INSTALL_DIR)/
 
 # 卸载
 uninstall:
 	rm -f $(INSTALL_DIR)/$(BINARY_NAME)
 	rm -f $(INSTALL_DIR)/$(BINARY_XFTP)
 
-# 运行 xsc
+# 运行 xssh
 run:
-	go run ./cmd/xsc
+	go run ./cmd/xssh
 
 # 运行 xftp
 run-xftp:
@@ -42,10 +43,10 @@ run-xftp:
 
 # 带参数运行
 tui:
-	go run ./cmd/xsc
+	go run ./cmd/xssh
 
 list:
-	go run ./cmd/xsc list
+	go run ./cmd/xssh list
 
 # 测试
 test:

@@ -24,6 +24,20 @@ type sessionsLoadedMsg struct {
 	sessionsDir string
 }
 
+// selectorCommand 定义一个 : 模式下的命令
+type selectorCommand struct {
+	Name        string   // 主命令名
+	Aliases     []string // 别名
+	Description string   // 中文描述
+}
+
+// selectorCommands 是选择器所有 : 命令的注册表
+var selectorCommands = []selectorCommand{
+	{Name: "q", Aliases: []string{"quit"}, Description: "退出程序"},
+	{Name: "noh", Aliases: []string{"nohlsearch"}, Description: "清除搜索过滤"},
+	{Name: "pw", Aliases: []string{"password"}, Description: "切换密码显示"},
+}
+
 // Selector session 选择器
 type Selector struct {
 	tree      *session.SessionNode   // session 树根节点
@@ -38,10 +52,23 @@ type Selector struct {
 	searching   bool
 	filter      string
 
+	// 命令模式
+	commandInput textinput.Model
+	commanding   bool
+
+	// 帮助
+	showHelp bool
+
+	// 密码显示
+	showPassword bool
+
 	// 状态
-	loading    bool
-	lastKeyG   bool // 检测 gg 组合
-	statusMsg  string
+	loading       bool
+	lastKeyG      bool   // 检测 gg 组合
+	lineNumBuffer string // 数字键累积（用于 nG 跳行）
+	statusMsg     string
+	showError     bool
+	errorMessage  string
 }
 
 // NewSelector 创建 session 选择器
@@ -52,10 +79,16 @@ func NewSelector() Selector {
 	searchInput.CharLimit = 50
 	searchInput.Width = 30
 
+	commandInput := textinput.New()
+	commandInput.Prompt = ":"
+	commandInput.CharLimit = 20
+	commandInput.Width = 20
+
 	return Selector{
-		loading:     true,
-		searchInput: searchInput,
-		statusMsg:   "加载会话中...",
+		loading:      true,
+		searchInput:  searchInput,
+		commandInput: commandInput,
+		statusMsg:    "加载会话中...",
 	}
 }
 
@@ -121,6 +154,24 @@ func (s Selector) Update(msg tea.Msg) (Selector, tea.Cmd) {
 		return s, nil
 
 	case tea.KeyMsg:
+		// 错误模式：任意键关闭
+		if s.showError {
+			s.showError = false
+			s.errorMessage = ""
+			return s, nil
+		}
+		// 帮助模式：任意键退出（Ctrl+C 退出程序）
+		if s.showHelp {
+			keys := DefaultKeyMap()
+			if key.Matches(msg, keys.Quit) {
+				return s, tea.Quit
+			}
+			s.showHelp = false
+			return s, nil
+		}
+		if s.commanding {
+			return s.handleCommandKey(msg)
+		}
 		if s.searching {
 			return s.handleSearchKey(msg)
 		}
@@ -133,54 +184,110 @@ func (s Selector) Update(msg tea.Msg) (Selector, tea.Cmd) {
 func (s Selector) handleNormalKey(msg tea.KeyMsg) (Selector, tea.Cmd) {
 	keys := DefaultKeyMap()
 
+	// 统一重置 lineNumBuffer 和 lastKeyG（仅数字键和 g 键在各自分支中恢复）
+	savedLineNumBuffer := s.lineNumBuffer
+	savedLastKeyG := s.lastKeyG
+	s.lineNumBuffer = ""
+	s.lastKeyG = false
+
 	switch {
 	case key.Matches(msg, keys.Quit):
 		return s, tea.Quit
 
 	case key.Matches(msg, keys.Up):
 		s.moveCursor(-1)
-		s.lastKeyG = false
 
 	case key.Matches(msg, keys.Down):
 		s.moveCursor(1)
-		s.lastKeyG = false
 
 	case key.Matches(msg, keys.HalfPageUp):
 		h := s.viewHeight()
 		s.moveCursor(-(h / 2))
-		s.lastKeyG = false
 
 	case key.Matches(msg, keys.HalfPageDown):
 		h := s.viewHeight()
 		s.moveCursor(h / 2)
-		s.lastKeyG = false
+
+	case key.Matches(msg, keys.PageUp):
+		s.moveCursor(-s.viewHeight())
+
+	case key.Matches(msg, keys.PageDown):
+		s.moveCursor(s.viewHeight())
 
 	// gg 跳顶
 	case msg.String() == "g":
-		if s.lastKeyG {
+		if savedLastKeyG {
 			s.cursor = 0
 			s.ensureVisible()
-			s.lastKeyG = false
 		} else {
 			s.lastKeyG = true
 		}
 		return s, nil
 
-	// G 跳底
+	// G 跳底（或 nG 跳行）
 	case msg.String() == "G":
+		if savedLineNumBuffer != "" {
+			var lineNum int
+			fmt.Sscanf(savedLineNumBuffer, "%d", &lineNum)
+			if lineNum > 0 && len(s.flatNodes) > 0 {
+				s.cursor = lineNum - 1
+				if s.cursor >= len(s.flatNodes) {
+					s.cursor = len(s.flatNodes) - 1
+				}
+				if s.cursor < 0 {
+					s.cursor = 0
+				}
+				s.ensureVisible()
+			}
+		} else if len(s.flatNodes) > 0 {
+			s.cursor = len(s.flatNodes) - 1
+			s.ensureVisible()
+		}
+
+	// 0 — 跳到第一行
+	case msg.String() == "0":
+		s.cursor = 0
+		s.ensureVisible()
+
+	// $ — 跳到最后一行
+	case msg.String() == "$":
 		if len(s.flatNodes) > 0 {
 			s.cursor = len(s.flatNodes) - 1
 			s.ensureVisible()
 		}
-		s.lastKeyG = false
+
+	// ^ — 跳到第一个文件节点（非目录）
+	case msg.String() == "^":
+		for i, node := range s.flatNodes {
+			if !node.IsDir {
+				s.cursor = i
+				s.ensureVisible()
+				break
+			}
+		}
+
+	// 数字键累积（用于 nG 跳行）
+	case len(msg.String()) == 1 && msg.String()[0] >= '1' && msg.String()[0] <= '9':
+		s.lineNumBuffer = savedLineNumBuffer + msg.String()
+		return s, nil
+
+	// n — 搜索下一个匹配
+	case msg.String() == "n":
+		if s.filter != "" {
+			s.searchNext(1)
+		}
+
+	// N — 搜索上一个匹配
+	case msg.String() == "N":
+		if s.filter != "" {
+			s.searchNext(-1)
+		}
 
 	case key.Matches(msg, keys.Enter):
-		s.lastKeyG = false
 		return s.selectCurrent()
 
 	case key.Matches(msg, keys.OpenFold):
 		// l — 展开目录
-		s.lastKeyG = false
 		node := s.currentNode()
 		if node != nil && node.IsDir && !node.Expanded {
 			node.Expanded = true
@@ -189,14 +296,12 @@ func (s Selector) handleNormalKey(msg tea.KeyMsg) (Selector, tea.Cmd) {
 
 	case key.Matches(msg, keys.CloseFold):
 		// h — 折叠目录或跳到父目录
-		s.lastKeyG = false
 		node := s.currentNode()
 		if node != nil {
 			if node.IsDir && node.Expanded {
 				node.Expanded = false
 				s.updateFlatNodes()
 			} else if node.Parent != nil {
-				// 跳到父目录
 				for i, n := range s.flatNodes {
 					if n == node.Parent {
 						s.cursor = i
@@ -207,24 +312,53 @@ func (s Selector) handleNormalKey(msg tea.KeyMsg) (Selector, tea.Cmd) {
 			}
 		}
 
-	case key.Matches(msg, keys.Select):
-		// Space — 切换展开/折叠
-		s.lastKeyG = false
+	case key.Matches(msg, keys.ToggleFold):
+		// o — 切换展开/折叠（等同 Space）
 		node := s.currentNode()
 		if node != nil && node.IsDir {
 			node.Expanded = !node.Expanded
 			s.updateFlatNodes()
 		}
 
+	case key.Matches(msg, keys.Select):
+		// Space — 切换展开/折叠
+		node := s.currentNode()
+		if node != nil && node.IsDir {
+			node.Expanded = !node.Expanded
+			s.updateFlatNodes()
+		}
+
+	case key.Matches(msg, keys.OpenAllFolds):
+		// E — 展开所有目录
+		if s.tree != nil {
+			s.expandAll(s.tree)
+			s.updateFlatNodes()
+		}
+
+	case key.Matches(msg, keys.CloseAllFolds):
+		// C — 折叠所有目录
+		if s.tree != nil {
+			s.collapseAll(s.tree)
+			s.updateFlatNodes()
+		}
+
+	case key.Matches(msg, keys.Help):
+		// ? — 帮助
+		s.showHelp = true
+		return s, nil
+
+	case key.Matches(msg, keys.Command):
+		// : — 进入命令模式
+		s.commanding = true
+		s.commandInput.SetValue("")
+		s.commandInput.Focus()
+		return s, textinput.Blink
+
 	case key.Matches(msg, keys.Search):
 		// / — 进入搜索模式
-		s.lastKeyG = false
 		s.searching = true
 		s.searchInput.Focus()
 		return s, textinput.Blink
-
-	default:
-		s.lastKeyG = false
 	}
 
 	return s, nil
@@ -234,9 +368,24 @@ func (s Selector) handleNormalKey(msg tea.KeyMsg) (Selector, tea.Cmd) {
 func (s Selector) handleSearchKey(msg tea.KeyMsg) (Selector, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
+		// Esc — 退出搜索并清除过滤
 		s.searching = false
 		s.filter = ""
 		s.searchInput.SetValue("")
+		s.updateFlatNodes()
+		s.cursor = 0
+		s.offset = 0
+		return s, nil
+
+	case tea.KeyCtrlC:
+		// Ctrl+C — 退出搜索但保留当前过滤结果
+		s.searching = false
+		return s, nil
+
+	case tea.KeyCtrlU:
+		// Ctrl+U — 清空当前输入
+		s.searchInput.SetValue("")
+		s.filter = ""
 		s.updateFlatNodes()
 		s.cursor = 0
 		s.offset = 0
@@ -258,6 +407,73 @@ func (s Selector) handleSearchKey(msg tea.KeyMsg) (Selector, tea.Cmd) {
 		s.updateFlatNodes()
 		s.cursor = 0
 		s.offset = 0
+		return s, cmd
+	}
+}
+
+// handleCommandKey 处理命令模式的键盘输入
+func (s Selector) handleCommandKey(msg tea.KeyMsg) (Selector, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyCtrlC:
+		s.commanding = false
+		s.commandInput.SetValue("")
+		return s, nil
+
+	case tea.KeyTab:
+		// Tab 自动补全
+		input := s.commandInput.Value()
+		completions := getSelectorCommandCompletions(input)
+		if len(completions) > 0 {
+			s.commandInput.SetValue(completions[0].Name)
+			s.commandInput.CursorEnd()
+		}
+		return s, nil
+
+	case tea.KeyEnter:
+		s.commanding = false
+		cmdStr := s.commandInput.Value()
+		s.commandInput.SetValue("")
+
+		switch matchSelectorCommand(cmdStr) {
+		case "q":
+			return s, tea.Quit
+		case "noh":
+			s.filter = ""
+			s.searchInput.SetValue("")
+			s.updateFlatNodes()
+			s.cursor = 0
+			s.offset = 0
+			return s, nil
+		case "pw":
+			s.showPassword = !s.showPassword
+			if s.showPassword {
+				s.statusMsg = "密码已显示"
+			} else {
+				s.statusMsg = "密码已隐藏"
+			}
+			return s, nil
+		}
+
+		// 尝试解析行号并跳转
+		if cmdStr != "" {
+			var lineNum int
+			fmt.Sscanf(cmdStr, "%d", &lineNum)
+			if lineNum > 0 && len(s.flatNodes) > 0 {
+				s.cursor = lineNum - 1
+				if s.cursor >= len(s.flatNodes) {
+					s.cursor = len(s.flatNodes) - 1
+				}
+				if s.cursor < 0 {
+					s.cursor = 0
+				}
+				s.ensureVisible()
+			}
+		}
+		return s, nil
+
+	default:
+		var cmd tea.Cmd
+		s.commandInput, cmd = s.commandInput.Update(msg)
 		return s, cmd
 	}
 }
@@ -286,75 +502,267 @@ func (s Selector) selectCurrent() (Selector, tea.Cmd) {
 	return s, nil
 }
 
-// View 渲染选择器
+// View 渲染选择器（70/30 左右分栏布局）
 func (s Selector) View(width, height int) string {
-	// 标题
-	title := PanelTitleActiveStyle.Width(width - 4).Render("xftp — 选择会话")
-
 	if s.loading {
 		content := lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorFgDim)).
 			Render("\n  加载中...")
-		return ConfirmBoxStyle.Width(width - 2).Height(height - 2).Render(
-			lipgloss.JoinVertical(lipgloss.Left, title, content),
-		)
+		return lipgloss.NewStyle().
+			Width(width).Height(height).
+			Render(content)
 	}
+
+	// 计算布局尺寸
+	treeWidth := width * 70 / 100
+	detailWidth := width - treeWidth
+	contentHeight := height - 2 // 留出状态栏空间
+
+	// 渲染树面板
+	treeView := s.renderTreePanel(treeWidth, contentHeight)
+
+	// 渲染详情面板
+	detailView := s.renderDetailPanel(detailWidth, contentHeight)
+
+	// 水平拼接
+	content := lipgloss.JoinHorizontal(lipgloss.Top, treeView, detailView)
+
+	// 状态栏
+	statusBar := s.renderSelectorStatusBar(width)
+
+	// 帮助模式：覆盖整个内容区域
+	if s.showHelp {
+		helpView := s.renderHelp(width, height)
+		return helpView
+	}
+
+	// 搜索模式显示搜索栏
+	if s.searching {
+		searchBar := SearchStyle.Width(width).Render(s.searchInput.View() + "  (Esc:取消 Enter:确认 C-u:清空 C-c:保留过滤)")
+		return lipgloss.JoinVertical(lipgloss.Left, content, statusBar, searchBar)
+	}
+
+	// 命令模式显示命令栏
+	if s.commanding {
+		cmdBar := s.renderCommandBar(width)
+		return lipgloss.JoinVertical(lipgloss.Left, content, statusBar, cmdBar)
+	}
+
+	// 错误模式
+	if s.showError {
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorRed)).
+			Background(lipgloss.Color(colorBg)).
+			Padding(1).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(colorRed))
+		return errorStyle.Render(s.errorMessage + "\n\n按任意键返回...")
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, content, statusBar)
+}
+
+// renderTreePanel 渲染左侧树面板（带边框）
+func (s Selector) renderTreePanel(width, height int) string {
+	innerWidth := width - 2 // 减去边框
+	innerHeight := height - 2
 
 	if len(s.flatNodes) == 0 {
 		var msg string
 		if s.filter != "" {
 			msg = fmt.Sprintf("\n  未找到匹配 \"%s\" 的会话", s.filter)
 		} else {
-			msg = "\n  未找到会话\n\n  请先使用 xsc 导入或创建 SSH 会话"
+			msg = "\n  未找到会话\n\n  请先使用 xssh 导入或创建 SSH 会话"
 		}
 		content := lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorFgDim)).
 			Render(msg)
-		return ConfirmBoxStyle.Width(width - 2).Height(height - 2).Render(
-			lipgloss.JoinVertical(lipgloss.Left, title, content),
-		)
+		return selectorTreeStyle.
+			Width(innerWidth).Height(innerHeight).
+			Render(content)
+	}
+
+	// 计算行号宽度
+	totalNodes := len(s.flatNodes)
+	lineNumWidth := len(fmt.Sprintf("%d", totalNodes))
+	if lineNumWidth < 3 {
+		lineNumWidth = 3
 	}
 
 	// 树形列表
-	viewH := s.viewHeight()
+	viewH := innerHeight
+	if viewH < 1 {
+		viewH = 1
+	}
 	endIdx := s.offset + viewH
-	if endIdx > len(s.flatNodes) {
-		endIdx = len(s.flatNodes)
+	if endIdx > totalNodes {
+		endIdx = totalNodes
 	}
 
 	var lines []string
 	for i := s.offset; i < endIdx; i++ {
-		lines = append(lines, s.renderNode(s.flatNodes[i], i == s.cursor, width-6))
+		// 行号前缀
+		lineNumStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorFgDark)).
+			Width(lineNumWidth).
+			Align(lipgloss.Right)
+		if i == s.cursor {
+			lineNumStyle = lineNumStyle.Foreground(lipgloss.Color(colorYellow))
+		}
+		lineNum := lineNumStyle.Render(fmt.Sprintf("%d", i+1))
+		nodeLine := s.renderNode(s.flatNodes[i], i == s.cursor, innerWidth-lineNumWidth-3)
+		lines = append(lines, lineNum+" "+nodeLine)
 	}
 	for len(lines) < viewH {
 		lines = append(lines, "")
 	}
 	treeContent := strings.Join(lines, "\n")
 
-	// 状态行
-	statusLine := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(colorFgDim)).
-		Render(fmt.Sprintf(" %d/%d  %s", s.cursor+1, len(s.flatNodes), s.statusMsg))
+	return selectorTreeStyle.
+		Width(innerWidth).Height(innerHeight).
+		Render(treeContent)
+}
 
-	// 搜索栏
-	var bottom string
-	if s.searching {
-		bottom = SearchStyle.Render(s.searchInput.View())
-	} else if s.filter != "" {
-		bottom = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(colorYellow)).
-			Render(fmt.Sprintf(" 过滤: %s  (Esc 清除)", s.filter))
-	} else {
-		bottom = statusLine
+// renderDetailPanel 渲染右侧详情面板
+func (s Selector) renderDetailPanel(width, height int) string {
+	innerWidth := width - 2
+	innerHeight := height - 2
+
+	node := s.currentNode()
+	if node == nil {
+		return selectorDetailStyle.
+			Width(innerWidth).Height(innerHeight).
+			Render(lipgloss.NewStyle().
+				Foreground(lipgloss.Color(colorFgDim)).
+				Render("未选择会话"))
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, title, treeContent, bottom)
-	return ConfirmBoxStyle.Width(width - 2).Render(content)
+	var content strings.Builder
+
+	if node.IsDir {
+		// 目录：显示目录名和子项数
+		content.WriteString(SelectorDetailTitleStyle.Render(node.Name + "/"))
+		content.WriteString("\n\n")
+		childCount := len(node.Children)
+		content.WriteString(SelectorDetailKeyStyle.Render("子项: "))
+		content.WriteString(SelectorDetailValueStyle.Render(fmt.Sprintf("%d", childCount)))
+		content.WriteString("\n")
+	} else if node.Session != nil {
+		sess := node.Session
+		// 标题
+		content.WriteString(SelectorDetailTitleStyle.Render(node.Name))
+		content.WriteString("\n\n")
+
+		// Host
+		content.WriteString(SelectorDetailKeyStyle.Render("Host: "))
+		content.WriteString(SelectorDetailValueStyle.Render(sess.Host))
+		content.WriteString("\n\n")
+
+		// Port
+		content.WriteString(SelectorDetailKeyStyle.Render("Port: "))
+		content.WriteString(SelectorDetailValueStyle.Render(fmt.Sprintf("%d", sess.Port)))
+		content.WriteString("\n\n")
+
+		// User
+		content.WriteString(SelectorDetailKeyStyle.Render("User: "))
+		content.WriteString(SelectorDetailValueStyle.Render(sess.User))
+		content.WriteString("\n\n")
+
+		// AuthType
+		content.WriteString(SelectorDetailKeyStyle.Render("Auth: "))
+		authStr := string(sess.AuthType)
+		if len(sess.AuthMethods) > 0 {
+			var methods []string
+			for _, am := range sess.AuthMethods {
+				methods = append(methods, am.Type)
+			}
+			authStr = strings.Join(methods, ", ")
+		}
+		content.WriteString(SelectorDetailValueStyle.Render(authStr))
+		content.WriteString("\n\n")
+
+		// Password（密码显示/隐藏）
+		if sess.AuthType == session.AuthTypePassword || s.hasPasswordAuth(sess) {
+			content.WriteString(SelectorDetailKeyStyle.Render("Pass: "))
+			if s.showPassword {
+				// 延迟解密加密密码
+				if sess.Password == "" && sess.EncryptedPassword != "" {
+					sess.ResolvePassword()
+				}
+				if sess.Password != "" {
+					content.WriteString(SelectorDetailValueStyle.Render(sess.Password))
+				} else {
+					content.WriteString(SelectorDetailValueStyle.Render("(empty)"))
+				}
+			} else {
+				content.WriteString(SelectorDetailValueStyle.Render("********"))
+			}
+			content.WriteString("\n\n")
+		}
+
+		// Description
+		if sess.Description != "" {
+			content.WriteString(SelectorDetailKeyStyle.Render("Desc: "))
+			content.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color(colorFg)).
+				Render(sess.Description))
+			content.WriteString("\n")
+		}
+
+		// Invalid 标记
+		if !sess.Valid {
+			content.WriteString("\n")
+			content.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color(colorRed)).
+				Render("Error: " + sess.Error.Error()))
+		}
+	} else {
+		content.WriteString(lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorFgDim)).
+			Render("无会话数据"))
+	}
+
+	return selectorDetailStyle.
+		Width(innerWidth).Height(innerHeight).
+		Render(content.String())
+}
+
+// renderSelectorStatusBar 渲染选择器状态栏
+func (s Selector) renderSelectorStatusBar(width int) string {
+	var left string
+
+	// 位置信息
+	if len(s.flatNodes) > 0 {
+		left = fmt.Sprintf(" %d/%d", s.cursor+1, len(s.flatNodes))
+	}
+
+	// 过滤状态
+	if s.filter != "" {
+		left += fmt.Sprintf(" | 过滤: '%s'", s.filter)
+	} else {
+		left += fmt.Sprintf(" | %s", s.statusMsg)
+	}
+
+	// 右侧帮助
+	right := " Enter:选择 /:搜索 q:退出 "
+
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 0 {
+		gap = 0
+	}
+
+	bar := left + strings.Repeat(" ", gap) + right
+	return StatusBarStyle.Width(width).Render(bar)
 }
 
 // renderNode 渲染单个树节点
 func (s Selector) renderNode(node *session.SessionNode, selected bool, width int) string {
 	indent := s.getIndent(node)
+
+	isSecureCRT := node.IsSecureCRT()
+	isXShell := node.IsXShell()
+	isMobaXterm := node.IsMobaXterm()
+	isExternal := isSecureCRT || isXShell || isMobaXterm
 
 	var icon string
 	var name string
@@ -365,29 +773,78 @@ func (s Selector) renderNode(node *session.SessionNode, selected bool, width int
 		} else {
 			icon = "▸ "
 		}
-		// 外部来源使用前缀标记
-		if node.IsSecureCRT() && node.Name == "securecrt" {
-			name = "[CRT] " + node.Name + "/"
-		} else if node.IsXShell() && node.Name == "xshell" {
-			name = "[XSH] " + node.Name + "/"
-		} else if node.IsMobaXterm() && node.Name == "mobaxterm" {
-			name = "[MXT] " + node.Name + "/"
+
+		if selected {
+			// 选中时使用纯文本，CursorStyle 统一着色
+			if isSecureCRT {
+				name = "[CRT] " + node.Name + "/"
+			} else if isXShell {
+				name = "[XSH] " + node.Name + "/"
+			} else if isMobaXterm {
+				name = "[MXT] " + node.Name + "/"
+			} else {
+				name = node.Name + "/"
+			}
 		} else {
-			name = node.Name + "/"
+			// 非选中：外部来源目录使用特殊样式
+			if isSecureCRT {
+				name = lipgloss.NewStyle().Foreground(lipgloss.Color("#b16286")).Bold(true).
+					Render("[CRT] " + node.Name + "/")
+			} else if isXShell {
+				name = lipgloss.NewStyle().Foreground(lipgloss.Color("#458588")).Bold(true).
+					Render("[XSH] " + node.Name + "/")
+			} else if isMobaXterm {
+				name = lipgloss.NewStyle().Foreground(lipgloss.Color("#d65d0e")).Bold(true).
+					Render("[MXT] " + node.Name + "/")
+			} else {
+				name = DirStyle.Render(node.Name + "/")
+			}
 		}
 	} else {
-		icon = "  "
-		name = node.Name
+		// 外部来源文件使用🔒图标
+		if isExternal {
+			icon = "🔒 "
+		} else {
+			icon = "  "
+		}
+
+		nodeName := node.Name
 		// 显示连接信息
 		if node.Session != nil && node.Session.Valid {
 			info := fmt.Sprintf(" (%s@%s:%d)", node.Session.User, node.Session.Host, node.Session.Port)
-			maxName := width - len(indent) - len(icon) - len(info) - 2
-			if maxName > 0 && len(name) > maxName {
-				name = name[:maxName-3] + "..."
+			maxName := width - len(indent) - 4 - len(info) - 2
+			if maxName > 0 && len(nodeName) > maxName {
+				nodeName = nodeName[:maxName-3] + "..."
 			}
-			name = name + lipgloss.NewStyle().Foreground(lipgloss.Color(colorFgDim)).Render(info)
+
+			if selected {
+				// 选中时使用纯文本
+				name = nodeName + info
+			} else {
+				dimInfo := lipgloss.NewStyle().Foreground(lipgloss.Color(colorFgDim)).Render(info)
+				// 外部来源文件使用不同颜色
+				if isSecureCRT {
+					name = securecrtFileStyle.Render(nodeName) + dimInfo
+				} else if isXShell {
+					name = xshellFileStyle.Render(nodeName) + dimInfo
+				} else if isMobaXterm {
+					name = mobaxtermFileStyle.Render(nodeName) + dimInfo
+				} else {
+					name = FileStyle.Render(nodeName) + dimInfo
+				}
+			}
 		} else if node.Session != nil && !node.Session.Valid {
-			name = name + lipgloss.NewStyle().Foreground(lipgloss.Color(colorRed)).Render(" [invalid]")
+			if selected {
+				name = nodeName + " [invalid]"
+			} else {
+				name = lipgloss.NewStyle().Foreground(lipgloss.Color(colorRed)).Render(nodeName + " [invalid]")
+			}
+		} else {
+			if selected {
+				name = nodeName
+			} else {
+				name = FileStyle.Render(nodeName)
+			}
 		}
 	}
 
@@ -397,19 +854,7 @@ func (s Selector) renderNode(node *session.SessionNode, selected bool, width int
 		return CursorStyle.Width(width).Render(line)
 	}
 
-	// 目录和文件使用不同样式
-	if node.IsDir {
-		if node.IsSecureCRT() {
-			return lipgloss.NewStyle().Foreground(lipgloss.Color("#b16286")).Bold(true).Render(line)
-		} else if node.IsXShell() {
-			return lipgloss.NewStyle().Foreground(lipgloss.Color("#458588")).Bold(true).Render(line)
-		} else if node.IsMobaXterm() {
-			return lipgloss.NewStyle().Foreground(lipgloss.Color("#d65d0e")).Bold(true).Render(line)
-		}
-		return DirStyle.Render(line)
-	}
-
-	return FileStyle.Render(line)
+	return line
 }
 
 // ============================================================
@@ -506,7 +951,7 @@ func (s *Selector) ensureVisible() {
 }
 
 // viewHeight 可用于树列表的高度
-// 总高度减去：标题(1) + 状态行(1) + 边框(2)
+// 总高度减去：状态栏(2) + 边框(2)
 func (s *Selector) viewHeight() int {
 	h := s.height - 4
 	if h < 1 {
@@ -534,6 +979,184 @@ func (s *Selector) expandAll(node *session.SessionNode) {
 			s.expandAll(child)
 		}
 	}
+}
+
+// collapseAll 折叠所有目录
+func (s *Selector) collapseAll(node *session.SessionNode) {
+	if node.IsDir {
+		node.Expanded = false
+		for _, child := range node.Children {
+			s.collapseAll(child)
+		}
+	}
+}
+
+// searchNext 查找下一个/上一个匹配项（在过滤后的节点中循环搜索）
+func (s *Selector) searchNext(direction int) {
+	if s.filter == "" || len(s.flatNodes) == 0 {
+		return
+	}
+
+	query := strings.ToLower(s.filter)
+	startIdx := s.cursor
+
+	for i := 1; i <= len(s.flatNodes); i++ {
+		idx := startIdx + (i * direction)
+
+		// 循环搜索
+		if idx >= len(s.flatNodes) {
+			idx = idx % len(s.flatNodes)
+		} else if idx < 0 {
+			idx = idx + len(s.flatNodes)
+		}
+
+		node := s.flatNodes[idx]
+		if node.IsDir {
+			continue
+		}
+		if s.matchesFilter(node, query) {
+			s.cursor = idx
+			s.ensureVisible()
+			return
+		}
+	}
+}
+
+// renderCommandBar 渲染命令输入栏（带命令补全提示）
+func (s Selector) renderCommandBar(width int) string {
+	input := s.commandInput.Value()
+	completions := getSelectorCommandCompletions(input)
+
+	var hints []string
+	for i, cmd := range completions {
+		hint := fmt.Sprintf(":%s - %s", cmd.Name, cmd.Description)
+		if i == 0 {
+			hints = append(hints, CmdHintActiveStyle.Render(hint))
+		} else {
+			hints = append(hints, CmdHintStyle.Render(hint))
+		}
+	}
+
+	bar := s.commandInput.View()
+	if len(hints) > 0 {
+		bar += "  " + strings.Join(hints, "  ")
+	}
+	bar += "  " + CmdHintStyle.Render("(Tab:补全 Enter:执行 Esc:取消)")
+
+	return SearchStyle.Width(width).Render(bar)
+}
+
+// renderHelp 渲染帮助视图
+func (s Selector) renderHelp(width, height int) string {
+	var b strings.Builder
+
+	renderSection := func(title string, items [][2]string) {
+		b.WriteString(HelpSectionStyle.Render(title))
+		b.WriteString("\n")
+		for _, item := range items {
+			b.WriteString("  ")
+			b.WriteString(HelpKeyStyle.Render(item[0]))
+			b.WriteString(HelpDescStyle.Render(item[1]))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	renderSection("导航", [][2]string{
+		{"↑/k, ↓/j", "上下移动"},
+		{"PgUp/C-b", "向上翻页"},
+		{"PgDn/C-f", "向下翻页"},
+		{"C-u, C-d", "向上/下半页"},
+		{"gg", "跳转到顶部"},
+		{"G", "跳转到底部"},
+		{"<n>G, :<n>", "跳转到第 n 行"},
+		{"0", "跳转到第一行"},
+		{"$", "跳转到最后一行"},
+		{"^", "跳转到第一个会话"},
+	})
+
+	renderSection("树操作", [][2]string{
+		{"Space/o", "展开/折叠目录"},
+		{"h/←", "折叠目录或跳到父目录"},
+		{"l/→", "展开目录"},
+		{"E", "展开所有目录"},
+		{"C", "折叠所有目录"},
+		{"Enter", "选择会话"},
+	})
+
+	renderSection("搜索", [][2]string{
+		{"/", "进入搜索模式"},
+		{"Enter", "确认搜索"},
+		{"Esc", "取消搜索并清除过滤"},
+		{"Ctrl+c", "退出搜索并保留过滤"},
+		{"Ctrl+u", "清空搜索输入"},
+		{"n/N", "下一个/上一个匹配"},
+	})
+
+	// 从命令注册表自动生成
+	cmdItems := make([][2]string, len(selectorCommands))
+	for i, cmd := range selectorCommands {
+		aliases := strings.Join(cmd.Aliases, "/")
+		cmdItems[i] = [2]string{
+			fmt.Sprintf(":%s/:%s", cmd.Name, aliases),
+			cmd.Description,
+		}
+	}
+	renderSection("命令 (: 模式)", cmdItems)
+
+	renderSection("其他", [][2]string{
+		{"?", "显示/关闭帮助"},
+		{"Ctrl+c/:q", "退出程序"},
+	})
+
+	helpContent := HelpContainerStyle.Render(b.String())
+	return lipgloss.NewStyle().Width(width).Height(height).Render(helpContent)
+}
+
+// matchSelectorCommand 根据输入返回匹配的命令规范名
+func matchSelectorCommand(input string) string {
+	for _, cmd := range selectorCommands {
+		if input == cmd.Name {
+			return cmd.Name
+		}
+		for _, alias := range cmd.Aliases {
+			if input == alias {
+				return cmd.Name
+			}
+		}
+	}
+	return ""
+}
+
+// getSelectorCommandCompletions 根据前缀返回匹配的命令列表
+func getSelectorCommandCompletions(prefix string) []selectorCommand {
+	if prefix == "" {
+		return selectorCommands
+	}
+	var result []selectorCommand
+	for _, cmd := range selectorCommands {
+		if strings.HasPrefix(cmd.Name, prefix) {
+			result = append(result, cmd)
+			continue
+		}
+		for _, alias := range cmd.Aliases {
+			if strings.HasPrefix(alias, prefix) {
+				result = append(result, cmd)
+				break
+			}
+		}
+	}
+	return result
+}
+
+// hasPasswordAuth 检查 session 的 AuthMethods 中是否包含密码认证
+func (s Selector) hasPasswordAuth(sess *session.Session) bool {
+	for _, am := range sess.AuthMethods {
+		if am.Type == "password" {
+			return true
+		}
+	}
+	return false
 }
 
 // countSessions 统计叶子节点数量

@@ -99,8 +99,8 @@ func DecryptPassword(encrypted, masterPassword string) (string, error) {
 	return decryptModern(encrypted, masterPassword)
 }
 
-// ConvertToXSCSession 将 MobaXterm 会话转换为 xsc 会话格式
-func (s *Session) ConvertToXSCSession() map[string]interface{} {
+// ConvertToXSSHSession 将 MobaXterm 会话转换为 xssh 会话格式
+func (s *Session) ConvertToXSSHSession() map[string]interface{} {
 	result := map[string]interface{}{
 		"host": s.Hostname,
 		"port": s.Port,

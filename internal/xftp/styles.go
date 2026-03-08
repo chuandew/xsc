@@ -4,19 +4,19 @@ import "github.com/charmbracelet/lipgloss"
 
 // Gruvbox 色彩常量
 const (
-	colorBg        = "#282828"
-	colorBgAlt     = "#3c3836"
-	colorBgPanel   = "#504945"
-	colorFg        = "#ebdbb2"
-	colorFgDim     = "#a89984"
-	colorFgDark    = "#665c54"
-	colorYellow    = "#fabd2f"
-	colorGreen     = "#b8bb26"
-	colorBlue      = "#83a598"
-	colorRed       = "#fb4934"
-	colorOrange    = "#fe8019"
-	colorPurple    = "#d3869b"
-	colorAqua      = "#8ec07c"
+	colorBg      = "#282828"
+	colorBgAlt   = "#3c3836"
+	colorBgPanel = "#504945"
+	colorFg      = "#ebdbb2"
+	colorFgDim   = "#a89984"
+	colorFgDark  = "#665c54"
+	colorYellow  = "#fabd2f"
+	colorGreen   = "#b8bb26"
+	colorBlue    = "#83a598"
+	colorRed     = "#fb4934"
+	colorOrange  = "#fe8019"
+	colorPurple  = "#d3869b"
+	colorAqua    = "#8ec07c"
 )
 
 // 面板边框样式
@@ -218,4 +218,44 @@ var (
 
 	FileTimeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color(colorFgDark))
+)
+
+// 选择器布局样式
+var (
+	// 选择器树面板
+	selectorTreeStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color(colorYellow)).
+				Padding(0, 1)
+
+	// 选择器详情面板
+	selectorDetailStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color(colorFgDark)).
+				Padding(1)
+
+	// 详情面板标题
+	SelectorDetailTitleStyle = lipgloss.NewStyle().
+					Background(lipgloss.Color(colorBgPanel)).
+					Foreground(lipgloss.Color(colorFg)).
+					Bold(true).
+					Padding(0, 1)
+
+	// 详情面板键名
+	SelectorDetailKeyStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(colorBlue))
+
+	// 详情面板值
+	SelectorDetailValueStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color(colorYellow))
+
+	// 外部来源文件样式
+	securecrtFileStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(colorPurple))
+
+	xshellFileStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(colorAqua))
+
+	mobaxtermFileStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(colorOrange))
 )

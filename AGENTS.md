@@ -1,10 +1,10 @@
-# Agent Instructions for XSC
+# Agent Instructions for XSSH
 
-XSC (XShell CLI) 是一个基于 Go 和 Bubble Tea 开发的 SSH 会话管理工具，提供 TUI 界面和 CLI 模式两种使用方式。
+XSSH (XShell CLI) 是一个基于 Go 和 Bubble Tea 开发的 SSH 会话管理工具，提供 TUI 界面和 CLI 模式两种使用方式。
 
 ## 项目概述
 
-XSC 是一个 SSH 会话管理器，主要功能包括：
+XSSH 是一个 SSH 会话管理器，主要功能包括：
 - 通过 YAML 文件管理 SSH 配置（文件即会话）
 - 提供优雅的 TUI 界面（使用 Bubble Tea）
 - 支持无限层级的目录树组织
@@ -27,7 +27,7 @@ XSC 是一个 SSH 会话管理器，主要功能包括：
 
 ```
 .
-├── cmd/xsc/                    # 应用程序入口
+├── cmd/xssh/                    # 应用程序入口
 │   └── main.go                 # 主程序：命令解析和分发
 ├── internal/                   # 私有包（不可被外部导入）
 │   ├── session/                # 会话管理
@@ -44,7 +44,7 @@ XSC 是一个 SSH 会话管理器，主要功能包括：
 │   └── config.go               # 全局配置、路径管理
 ├── specs/                      # 功能规范
 │   ├── README.md               # 规范说明
-│   └── xsc.feature             # Gherkin 格式功能规范
+│   └── xssh.feature             # Gherkin 格式功能规范
 ├── tests/                      # 测试文档
 │   └── README.md               # 测试说明和示例
 ├── src/                        # 源码说明
@@ -304,7 +304,7 @@ ssh:
 ### 测试策略
 - 单元测试位于与源码相同的包中，命名 `*_test.go`
 - SecureCRT 解密功能有实际测试用例（需要真实密码）
-- 规范文档使用 Gherkin 格式，位于 `specs/xsc.feature`
+- 规范文档使用 Gherkin 格式，位于 `specs/xssh.feature`
 - 测试应保持与规范同步
 
 ## 扩展开发
@@ -316,7 +316,7 @@ ssh:
 4. 在 TUI 详情面板中添加显示逻辑
 
 ### 添加新的命令
-1. 在 `cmd/xsc/main.go` 的 `switch` 语句中添加新命令
+1. 在 `cmd/xssh/main.go` 的 `switch` 语句中添加新命令
 2. 实现对应的处理函数
 3. 更新 `showHelp()` 显示帮助信息
 

@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-XSC (XShell CLI) is a Go-based SSH session manager with a TUI (Bubble Tea) and CLI interface. Sessions are YAML files stored in `~/.xsc/sessions/`; the directory hierarchy becomes the tree structure in the TUI. It also supports importing and decrypting SecureCRT, Xshell, and MobaXterm sessions.
+XSSH (XShell CLI) is a Go-based SSH session manager with a TUI (Bubble Tea) and CLI interface. Sessions are YAML files stored in `~/.xsc/sessions/`; the directory hierarchy becomes the tree structure in the TUI. It also supports importing and decrypting SecureCRT, Xshell, and MobaXterm sessions.
 
 ## Build & Development Commands
 
 ```bash
-make build          # Build binary to ./build/xsc
+make build          # Build binary to ./build/xssh
 make test           # Run all tests: go test -v ./...
 make fmt            # Format code: go fmt ./...
 make vet            # Static analysis: go vet ./...
@@ -27,7 +27,7 @@ Full quality check: `make fmt && make vet && make test`
 
 ## Architecture
 
-**Entry point**: `cmd/xsc/main.go` — command dispatcher routing to `tui`, `list`, `connect`, `import-securecrt`, `import-xshell`, `import-mobaxterm`, `help`.
+**Entry point**: `cmd/xssh/main.go` — command dispatcher routing to `tui`, `list`, `connect`, `import-securecrt`, `import-xshell`, `import-mobaxterm`, `help`.
 
 **Core packages** (all under `internal/`):
 
@@ -53,10 +53,10 @@ Full quality check: `make fmt && make vet && make test`
 - **YAML tags**: `yaml:"field_name,omitempty"` on struct fields; internal fields use `yaml:"-"`
 - **Error handling**: wrap with `fmt.Errorf("context: %w", err)` — use `%w` not `%v`
 - **File permissions**: session files saved as 0600
-- **Specs**: Gherkin format in `specs/xsc.feature` — keep tests in sync with specs
+- **Specs**: Gherkin format in `specs/xssh.feature` — keep tests in sync with specs
 
 ## Extending the Codebase
 
 - **New auth method**: add `AuthType` constant in `session.go` → add validation in `Session.Validate()` → implement in `ssh/client.go` → update TUI details panel
-- **New CLI command**: add case in `cmd/xsc/main.go` switch → implement handler → update `showHelp()`
+- **New CLI command**: add case in `cmd/xssh/main.go` switch → implement handler → update `showHelp()`
 - **TUI changes**: keybindings in `KeyMap`/`DefaultKeyMap()`, rendering in `View()` and `renderXxx()` methods, styles at top of `tui.go`

@@ -9,6 +9,8 @@ type KeyMap struct {
 	Down         key.Binding
 	HalfPageUp   key.Binding
 	HalfPageDown key.Binding
+	PageUp       key.Binding
+	PageDown     key.Binding
 	GoToTop      key.Binding
 	GoToBottom   key.Binding
 
@@ -16,18 +18,21 @@ type KeyMap struct {
 	SwitchPanel key.Binding
 
 	// 目录导航
-	Enter     key.Binding // 进入目录
-	Backspace key.Binding // 返回上级
-	OpenFold  key.Binding // 展开（l）
-	CloseFold key.Binding // 折叠（h）
+	Enter         key.Binding // 进入目录
+	Backspace     key.Binding // 返回上级
+	OpenFold      key.Binding // 展开（l）
+	CloseFold     key.Binding // 折叠（h）
+	ToggleFold    key.Binding // 切换展开/折叠（o）
+	OpenAllFolds  key.Binding // 展开所有（E）
+	CloseAllFolds key.Binding // 折叠所有（C）
 
 	// 文件操作
-	Yank    key.Binding // 标记（yank）
-	Paste   key.Binding // 粘贴/传输
-	Delete  key.Binding // 删除
-	Rename  key.Binding // 重命名
-	Mkdir   key.Binding // 创建目录
-	Select  key.Binding // 多选/取消选择
+	Yank   key.Binding // 标记（yank）
+	Paste  key.Binding // 粘贴/传输
+	Delete key.Binding // 删除
+	Rename key.Binding // 重命名
+	Mkdir  key.Binding // 创建目录
+	Select key.Binding // 多选/取消选择
 
 	// 全局
 	Help    key.Binding
@@ -54,6 +59,14 @@ func DefaultKeyMap() KeyMap {
 		HalfPageDown: key.NewBinding(
 			key.WithKeys("ctrl+d"),
 			key.WithHelp("C-d", "半页下滚"),
+		),
+		PageUp: key.NewBinding(
+			key.WithKeys("pgup", "ctrl+b"),
+			key.WithHelp("PgUp/C-b", "向上翻页"),
+		),
+		PageDown: key.NewBinding(
+			key.WithKeys("pgdown", "ctrl+f"),
+			key.WithHelp("PgDn/C-f", "向下翻页"),
 		),
 		GoToTop: key.NewBinding(
 			key.WithKeys("home", "g"),
@@ -82,6 +95,18 @@ func DefaultKeyMap() KeyMap {
 		CloseFold: key.NewBinding(
 			key.WithKeys("h", "left"),
 			key.WithHelp("h/←", "折叠"),
+		),
+		ToggleFold: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "切换展开/折叠"),
+		),
+		OpenAllFolds: key.NewBinding(
+			key.WithKeys("E"),
+			key.WithHelp("E", "展开所有"),
+		),
+		CloseAllFolds: key.NewBinding(
+			key.WithKeys("C"),
+			key.WithHelp("C", "折叠所有"),
 		),
 		Yank: key.NewBinding(
 			key.WithKeys("y"),

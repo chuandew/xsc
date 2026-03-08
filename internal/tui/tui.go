@@ -321,6 +321,18 @@ type AgentKeyCache struct {
 	timestamp int64
 }
 
+// agentKeysLoadedMsg SSH Agent keys 加载完成消息
+type agentKeysLoadedMsg struct {
+	keys []internalssh.AgentKeyInfo
+	err  error
+}
+
+// loadAgentKeys 异步加载 SSH Agent keys
+func loadAgentKeys() tea.Msg {
+	keys, err := internalssh.ListAgentKeys()
+	return agentKeysLoadedMsg{keys: keys, err: err}
+}
+
 // Model 是 TUI 的模型
 type Model struct {
 	keys          KeyMap
@@ -358,6 +370,7 @@ type Model struct {
 	deleteConfirmMode  bool                 // 是否处于删除确认模式
 	deleteConfirmInput textinput.Model      // 确认输入框
 	deleteTargetNode   *session.SessionNode // 要删除的目标节点
+
 }
 
 // 初始化 Model
@@ -415,6 +428,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.loadSessions(),
 		tea.EnterAltScreen,
+		loadAgentKeys,
 	)
 }
 
@@ -426,6 +440,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.detailView.Width = m.width * 30 / 100
 		m.detailView.Height = m.height - 3
+		return m, nil
+
+	case agentKeysLoadedMsg:
+		m.agentKeyCache = &AgentKeyCache{
+			keys: msg.keys,
+			err:  msg.err,
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -482,72 +503,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// 处理键盘输入
+		// 统一重置 lineNumBuffer 和 lastKeyG（仅数字键和 g 键在各自分支中恢复）
+		savedLineNumBuffer := m.lineNumBuffer
+		savedLastKeyG := m.lastKeyG
+		m.lineNumBuffer = ""
+		m.lastKeyG = false
+
 		switch {
 		case key.Matches(msg, m.keys.Quit):
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, tea.Quit
 
 		case key.Matches(msg, m.keys.Help):
 			m.showHelp = !m.showHelp
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.Up):
 			m.moveCursor(-1)
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.Down):
 			m.moveCursor(1)
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.PageUp):
 			m.moveCursor(-(m.height - 3))
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.PageDown):
 			m.moveCursor(m.height - 3)
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.HalfPageUp):
 			m.moveCursor(-((m.height - 3) / 2))
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.HalfPageDown):
 			m.moveCursor((m.height - 3) / 2)
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: gg - 跳转到顶部（或者 g 后面跟 g）
 		case msg.String() == "g":
 			// 检测是否是 'gg' 组合
-			if m.lastKeyG {
+			if savedLastKeyG {
 				m.cursor = 0
-				m.lastKeyG = false
 				return m, nil
 			}
-			m.lastKeyG = true
+			m.lastKeyG = true // 恢复：等待下一个 g
 			return m, nil
 
 		// Vim: G - 跳转到底部，或者数字+G跳转到指定行
 		case msg.String() == "G":
 			visibleNodes := m.getVisibleNodes()
-			if m.lineNumBuffer != "" {
+			if savedLineNumBuffer != "" {
 				// 如果有累积的数字，跳转到指定行
 				var lineNum int
-				fmt.Sscanf(m.lineNumBuffer, "%d", &lineNum)
+				fmt.Sscanf(savedLineNumBuffer, "%d", &lineNum)
 				if lineNum > 0 && len(visibleNodes) > 0 {
 					m.cursor = lineNum - 1
 					if m.cursor >= len(visibleNodes) {
@@ -557,20 +567,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.cursor = 0
 					}
 				}
-				m.lineNumBuffer = ""
 			} else {
 				// 没有数字，跳转到底部
 				if len(visibleNodes) > 0 {
 					m.cursor = len(visibleNodes) - 1
 				}
 			}
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: 0 - 跳转到行首（对于列表，跳到顶部）
 		case msg.String() == "0":
 			m.cursor = 0
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: $ - 跳转到行尾（对于列表，跳到底部）
@@ -579,7 +586,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(visibleNodes) > 0 {
 				m.cursor = len(visibleNodes) - 1
 			}
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: ^ - 跳转到第一个非空字符（对于树形列表，跳到第一个文件）
@@ -591,18 +597,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: n - 有搜索时查找下一个，无搜索时新建会话
 		case msg.String() == "n":
 			if m.searchQuery != "" {
 				m.searchNext(1)
-				m.lastKeyG = false
 				return m, nil
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, m.prepareNewSession()
 
 		// Vim: N - 查找上一个
@@ -610,29 +612,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.searchQuery != "" {
 				m.searchNext(-1)
 			}
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: : - 进入行号跳转模式
 		case msg.String() == ":":
 			m.lineNumMode = true
-			m.lineNumBuffer = ""
 			m.lineNumInput.SetValue("")
 			m.lineNumInput.Focus()
-			m.lastKeyG = false
 			return m, textinput.Blink
 
 		// 数字键 - 可能是在输入行号
 		case len(msg.String()) == 1 && msg.String()[0] >= '1' && msg.String()[0] <= '9':
-			// 开始累积数字
-			m.lineNumBuffer += msg.String()
-			// 如果输入了数字后按 G，会在下一个 case 处理
-			m.lastKeyG = false
+			// 恢复并累积数字
+			m.lineNumBuffer = savedLineNumBuffer + msg.String()
 			return m, nil
 
 		case key.Matches(msg, m.keys.GoToTop):
 			m.cursor = 0
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.GoToBottom):
@@ -640,7 +636,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(visibleNodes) > 0 {
 				m.cursor = len(visibleNodes) - 1
 			}
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.Space):
@@ -648,8 +643,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected != nil && selected.IsDir {
 				selected.Expanded = !selected.Expanded
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.Enter):
@@ -658,15 +651,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// 使用 execCommand 执行外部命令，确保完全退出 TUI 后再连接
 				return m, m.execSSHCommand(selected.Session)
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.Search):
 			m.searchMode = true
 			m.searchInput.Focus()
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, textinput.Blink
 
 		case key.Matches(msg, m.keys.Edit):
@@ -689,8 +678,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				return m, m.execEditCommand(selected.Session)
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.Delete):
@@ -710,8 +697,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				return m, m.prepareDeleteConfirm(selected)
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		case key.Matches(msg, m.keys.Rename):
@@ -734,8 +719,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				return m, m.prepareRenameSession(selected)
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: o - Toggle fold (展开/折叠当前目录)
@@ -744,8 +727,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected != nil && selected.IsDir {
 				selected.Expanded = !selected.Expanded
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: h/← - 折叠当前目录（如果已展开）或跳到父目录
@@ -765,8 +746,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: l/→ - 展开当前目录（如果已折叠）
@@ -775,8 +754,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selected != nil && selected.IsDir && !selected.Expanded {
 				selected.Expanded = true
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: E - 展开所有目录
@@ -784,8 +761,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tree != nil {
 				m.expandAll(m.tree)
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 
 		// Vim: C - 折叠所有目录
@@ -793,8 +768,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.tree != nil {
 				m.collapseAll(m.tree)
 			}
-			m.lineNumBuffer = ""
-			m.lastKeyG = false
 			return m, nil
 		}
 
@@ -848,7 +821,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case newSessionEditorCompleteMsg:
 		// 新建会话编辑器关闭，处理结果并重新加载
 		return m, tea.Batch(
-			m.handleNewSessionComplete(msg.err),
+			m.handleNewSessionComplete(msg),
 			tea.EnterAltScreen,
 			func() tea.Msg {
 				return tea.WindowSizeMsg{Width: m.width, Height: m.height}
@@ -918,8 +891,11 @@ func (m Model) View() string {
 	detailWidth := m.width * 30 / 100
 	contentHeight := m.height - 2 // 留出状态栏空间
 
+	// 计算可见节点一次，传递给各 render 函数
+	visibleNodes := m.getVisibleNodes()
+
 	// 构建树形视图
-	treeView := m.renderTree(treeWidth, contentHeight)
+	treeView := m.renderTree(treeWidth, contentHeight, visibleNodes)
 
 	// 构建详情视图
 	detailView := m.renderDetail(detailWidth, contentHeight)
@@ -928,7 +904,7 @@ func (m Model) View() string {
 	content := lipgloss.JoinHorizontal(lipgloss.Top, treeView, detailView)
 
 	// 构建状态栏
-	statusBar := m.renderStatusBar()
+	statusBar := m.renderStatusBar(visibleNodes)
 
 	// 合并所有内容
 	if m.searchMode {
@@ -960,12 +936,11 @@ func (m Model) View() string {
 }
 
 // renderTree 渲染树形视图
-func (m Model) renderTree(width, height int) string {
+func (m Model) renderTree(width, height int, visibleNodes []*session.SessionNode) string {
 	if m.tree == nil {
 		return treeStyle.Width(width).Height(height).Render("Loading sessions...")
 	}
 
-	visibleNodes := m.getVisibleNodes()
 	totalNodes := len(visibleNodes)
 
 	if totalNodes == 0 {
@@ -1182,7 +1157,7 @@ func (m Model) renderDetail(width, height int) string {
 			authLines = append(authLines, line)
 		}
 	} else {
-		// 显示单一认证方式（原生 XSC 风格）
+		// 显示单一认证方式（原生 XSSH 风格）
 		authTypeStr := m.formatAuthType(string(s.AuthType))
 		authIcon := m.getAuthIcon(string(s.AuthType))
 		var detail string
@@ -1236,18 +1211,12 @@ func (m Model) renderDetail(width, height int) string {
 	if s.AuthType == session.AuthTypeAgent {
 		content.WriteString(detailKeyStyle.Render("SSH Agent Keys:\n"))
 		content.WriteString("\n")
-		// 使用缓存的 SSH Agent keys
+		// 使用缓存的 SSH Agent keys（在 Init/Update 中加载）
 		var keys []internalssh.AgentKeyInfo
 		var err error
 		if m.agentKeyCache != nil {
 			keys = m.agentKeyCache.keys
 			err = m.agentKeyCache.err
-		} else {
-			keys, err = internalssh.ListAgentKeys()
-			m.agentKeyCache = &AgentKeyCache{
-				keys: keys,
-				err:  err,
-			}
 		}
 		if err != nil {
 			content.WriteString(invalidStyle.Render("  "+err.Error()) + "\n\n")
@@ -1320,7 +1289,7 @@ func (m Model) formatAuthType(authType string) string {
 }
 
 // renderStatusBar 渲染状态栏
-func (m Model) renderStatusBar() string {
+func (m Model) renderStatusBar(visibleNodes []*session.SessionNode) string {
 	var status strings.Builder
 
 	if m.searchMode {
@@ -1334,10 +1303,10 @@ func (m Model) renderStatusBar() string {
 
 	// 显示搜索状态
 	if m.searchQuery != "" {
-		status.WriteString(fmt.Sprintf("Filter: '%s' (%d) | ", m.searchQuery, len(m.getVisibleNodes())))
+		status.WriteString(fmt.Sprintf("Filter: '%s' (%d) | ", m.searchQuery, len(visibleNodes)))
 		status.WriteString("Esc:clear Enter:confirm | ")
 	} else {
-		status.WriteString(fmt.Sprintf("Total: %d | ", len(m.getVisibleNodes())))
+		status.WriteString(fmt.Sprintf("Total: %d | ", len(visibleNodes)))
 	}
 	if m.showPassword {
 		status.WriteString("[PW] ")
@@ -1846,13 +1815,6 @@ func (m Model) renameSession(node *session.SessionNode, newName string) tea.Cmd 
 }
 
 // createNewSession 创建新会话 - 第一步：准备临时文件
-type newSessionContext struct {
-	tempPath   string
-	targetPath string
-}
-
-var currentNewSession *newSessionContext
-
 func (m Model) createNewSession(dir, filename string) tea.Cmd {
 	targetPath := filepath.Join(dir, filename)
 
@@ -1888,15 +1850,14 @@ func (m Model) createNewSession(dir, filename string) tea.Cmd {
 		}
 	}
 
-	// 保存上下文供后续使用
-	currentNewSession = &newSessionContext{
-		tempPath:   tempPath,
-		targetPath: targetPath,
-	}
-
 	// 使用 tea.Exec 打开编辑器（这会暂停 TUI）
+	// 通过消息传递上下文，避免全局/共享状态
 	return tea.Exec(newSessionEditorProcess{tempPath: tempPath}, func(err error) tea.Msg {
-		return newSessionEditorCompleteMsg{err: err}
+		return newSessionEditorCompleteMsg{
+			err:        err,
+			tempPath:   tempPath,
+			targetPath: targetPath,
+		}
 	})
 }
 
@@ -1925,26 +1886,23 @@ func (p newSessionEditorProcess) SetStderr(w io.Writer) {}
 
 // newSessionEditorCompleteMsg 新建会话编辑器完成消息
 type newSessionEditorCompleteMsg struct {
-	err error
+	err        error
+	tempPath   string
+	targetPath string
 }
 
 // handleNewSessionComplete 处理新建会话编辑器关闭后的逻辑
-func (m Model) handleNewSessionComplete(err error) tea.Cmd {
+func (m Model) handleNewSessionComplete(msg newSessionEditorCompleteMsg) tea.Cmd {
 	return func() tea.Msg {
-		if currentNewSession == nil {
+		tempPath := msg.tempPath
+		targetPath := msg.targetPath
+
+		if tempPath == "" {
 			return editorCompleteMsg{err: nil}
 		}
 
-		tempPath := currentNewSession.tempPath
-		targetPath := currentNewSession.targetPath
-
-		// 清理全局上下文
-		defer func() {
-			currentNewSession = nil
-		}()
-
 		// 编辑器非正常退出（如 :q!），删除临时文件
-		if err != nil {
+		if msg.err != nil {
 			os.Remove(tempPath)
 			return editorCompleteMsg{err: nil} // 不显示错误，因为是用户取消
 		}

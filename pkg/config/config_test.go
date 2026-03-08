@@ -10,6 +10,17 @@ func TestLoadGlobalConfig(t *testing.T) {
 	// 重置全局配置缓存
 	globalConfig = nil
 
+	// 使用临时目录隔离，避免加载用户真实配置
+	tmpDir, err := os.MkdirTemp("", "xsc-config-default-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
 	// 测试配置文件不存在的情况（应返回默认配置）
 	cfg, err := LoadGlobalConfig()
 	if err != nil {
@@ -45,6 +56,7 @@ func TestSaveAndLoadGlobalConfig(t *testing.T) {
 	defer os.Setenv("HOME", originalHome)
 
 	// 创建配置
+	strictHostKey := false
 	cfg := &GlobalConfig{
 		SecureCRT: SecureCRTConfig{
 			Enabled:     true,
@@ -52,7 +64,7 @@ func TestSaveAndLoadGlobalConfig(t *testing.T) {
 			Password:    "testpass",
 		},
 		SSH: SSHConfig{
-			StrictHostKey:  false,
+			StrictHostKey:  &strictHostKey,
 			KnownHostsFile: "~/.ssh/known_hosts",
 		},
 	}
@@ -79,8 +91,8 @@ func TestSaveAndLoadGlobalConfig(t *testing.T) {
 	if loadedCfg.SecureCRT.Password != "testpass" {
 		t.Errorf("Password = %s, want testpass", loadedCfg.SecureCRT.Password)
 	}
-	if loadedCfg.SSH.StrictHostKey {
-		t.Error("SSH.StrictHostKey should be false")
+	if loadedCfg.SSH.IsStrictHostKey() {
+		t.Error("SSH.StrictHostKey should be false when explicitly set")
 	}
 }
 

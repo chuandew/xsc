@@ -64,7 +64,7 @@ func TestParseAuthMethods(t *testing.T) {
 	}
 }
 
-func TestSessionConvertToXSCSession(t *testing.T) {
+func TestSessionConvertToXSSHSession(t *testing.T) {
 	session := &Session{
 		Name:     "test-session",
 		Hostname: "192.168.1.100",
@@ -78,7 +78,7 @@ func TestSessionConvertToXSCSession(t *testing.T) {
 		PublicKeyFile: "/path/to/key",
 	}
 
-	result := session.ConvertToXSCSession()
+	result := session.ConvertToXSSHSession()
 
 	// 检查基本字段
 	if result["host"] != "192.168.1.100" {
@@ -105,7 +105,7 @@ func TestSessionConvertToXSCSession(t *testing.T) {
 	}
 }
 
-func TestSessionConvertToXSCSessionWithPassword(t *testing.T) {
+func TestSessionConvertToXSSHSessionWithPassword(t *testing.T) {
 	session := &Session{
 		Name:              "test-session",
 		Hostname:          "192.168.1.100",
@@ -117,7 +117,7 @@ func TestSessionConvertToXSCSessionWithPassword(t *testing.T) {
 		},
 	}
 
-	result := session.ConvertToXSCSession()
+	result := session.ConvertToXSSHSession()
 
 	authMethods, ok := result["auth_methods"].([]AuthMethod)
 	if !ok {
@@ -135,7 +135,7 @@ func TestSessionConvertToXSCSessionWithPassword(t *testing.T) {
 	}
 }
 
-func TestSessionConvertToXSCSessionDefaultAuth(t *testing.T) {
+func TestSessionConvertToXSSHSessionDefaultAuth(t *testing.T) {
 	// 测试当没有指定认证方式时的默认行为
 	session := &Session{
 		Name:     "test-session",
@@ -145,7 +145,7 @@ func TestSessionConvertToXSCSessionDefaultAuth(t *testing.T) {
 		// 没有 AuthMethods，也没有密码或密钥
 	}
 
-	result := session.ConvertToXSCSession()
+	result := session.ConvertToXSSHSession()
 
 	authMethods, ok := result["auth_methods"].([]AuthMethod)
 	if !ok {

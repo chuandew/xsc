@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -41,12 +42,8 @@ func Connect(s *session.Session) error {
 	}
 
 	switch s.AuthType {
-	case session.AuthTypePassword:
-		return connectWithPassword(s)
-	case session.AuthTypeKey:
-		return connectWithKey(s)
-	case session.AuthTypeAgent:
-		return connectWithAgent(s)
+	case session.AuthTypePassword, session.AuthTypeKey, session.AuthTypeAgent:
+		return connectSingle(s)
 	default:
 		return fmt.Errorf("unsupported auth type: %s", s.AuthType)
 	}
@@ -97,19 +94,36 @@ func Dial(s *session.Session) (*ssh.Client, func(), error) {
 
 	client := ssh.NewClient(c, chans, reqs)
 
-	// 启动 keepalive goroutine，每 30 秒发送一次心跳
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
+	// 启动 keepalive goroutine，使用 context 控制生命周期
+	keepaliveCtx, keepaliveCancel := context.WithCancel(context.Background())
+	go startKeepalive(keepaliveCtx, client)
+
+	// 将 keepalive 取消和原有 cleanup 合并
+	combinedCleanup := func() {
+		keepaliveCancel()
+		if cleanup != nil {
+			cleanup()
+		}
+	}
+
+	return client, combinedCleanup, nil
+}
+
+// startKeepalive 启动 keepalive 心跳，监听 context 取消
+func startKeepalive(ctx context.Context, client *ssh.Client) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
 			if err != nil {
 				return
 			}
 		}
-	}()
-
-	return client, cleanup, nil
+	}
 }
 
 // dialWithMultipleAuth 按顺序尝试多种认证方式建立连接（不创建交互式会话）
@@ -165,19 +179,19 @@ func dialWithMultipleAuth(s *session.Session) (*ssh.Client, func(), error) {
 
 		client := ssh.NewClient(c, chans, reqs)
 
-		// 启动 keepalive goroutine，每 30 秒发送一次心跳
-		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for range ticker.C {
-				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
-				if err != nil {
-					return
-				}
-			}
-		}()
+		// 启动 keepalive goroutine，使用 context 控制生命周期
+		keepaliveCtx, keepaliveCancel := context.WithCancel(context.Background())
+		go startKeepalive(keepaliveCtx, client)
 
-		return client, cleanup, nil
+		// 将 keepalive 取消和原有 cleanup 合并
+		combinedCleanup := func() {
+			keepaliveCancel()
+			if cleanup != nil {
+				cleanup()
+			}
+		}
+
+		return client, combinedCleanup, nil
 	}
 
 	if lastErr != nil {
@@ -189,6 +203,12 @@ func dialWithMultipleAuth(s *session.Session) (*ssh.Client, func(), error) {
 // connectWithMultipleAuth 按顺序尝试多种认证方式
 func connectWithMultipleAuth(s *session.Session) error {
 	var lastErr error
+	var cleanups []func()
+	defer func() {
+		for _, cleanup := range cleanups {
+			cleanup()
+		}
+	}()
 
 	for i, authMethod := range s.AuthMethods {
 		// 延迟解密密码（如果需要）
@@ -219,7 +239,7 @@ func connectWithMultipleAuth(s *session.Session) error {
 		}
 
 		if cleanup != nil {
-			defer cleanup()
+			cleanups = append(cleanups, cleanup)
 		}
 
 		// 尝试连接
@@ -239,31 +259,75 @@ func connectWithMultipleAuth(s *session.Session) error {
 	return fmt.Errorf("all authentication methods failed")
 }
 
+// getHostKeyCallback 获取主机密钥验证回调
+// 默认启用 known_hosts 验证（安全优先），仅当配置中显式设 strict_host_key: false 时才跳过
+func getHostKeyCallback() ssh.HostKeyCallback {
+	cfg, err := config.LoadGlobalConfig()
+	if err == nil && !cfg.SSH.IsStrictHostKey() {
+		// 显式禁用严格主机密钥验证
+		return ssh.InsecureIgnoreHostKey()
+	}
+
+	// 默认或启用严格验证：尝试使用 known_hosts
+	knownHostsPath, err := config.GetKnownHostsPath()
+	if err != nil || knownHostsPath == "" {
+		// 无法获取 known_hosts 路径，回退到忽略
+		return ssh.InsecureIgnoreHostKey()
+	}
+
+	if _, statErr := os.Stat(knownHostsPath); statErr != nil {
+		// known_hosts 文件不存在，回退到忽略
+		return ssh.InsecureIgnoreHostKey()
+	}
+
+	hostKeyCallback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		// 解析 known_hosts 失败，回退到忽略
+		return ssh.InsecureIgnoreHostKey()
+	}
+
+	// TOFU: Trust on First Use
+	// 未知主机（不在 known_hosts 中）→ 接受并写入
+	// 已知主机但密钥变更 → 拒绝（可能 MITM 攻击）
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		err := hostKeyCallback(hostname, remote, key)
+		if err == nil {
+			return nil // 主机密钥匹配
+		}
+
+		var keyErr *knownhosts.KeyError
+		if errors.As(err, &keyErr) {
+			if len(keyErr.Want) == 0 {
+				// 未知主机 - TOFU: 首次连接自动信任
+				appendHostKey(knownHostsPath, remote, key)
+				return nil
+			}
+			// 密钥变更 - 可能是中间人攻击，拒绝连接
+			return fmt.Errorf("WARNING: host key for %s has changed! This could indicate a MITM attack: %w", hostname, err)
+		}
+
+		return err
+	}
+}
+
+// appendHostKey 将主机密钥追加到 known_hosts 文件（尽力而为）
+func appendHostKey(knownHostsPath string, remote net.Addr, key ssh.PublicKey) {
+	f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	line := knownhosts.Line([]string{knownhosts.Normalize(remote.String())}, key)
+	fmt.Fprintf(f, "%s\n", line)
+}
+
 // getSSHConfig 根据认证类型获取 SSH 客户端配置
 // 返回的 cleanup 函数用于关闭 SSH Agent 连接（非 agent 模式时为 nil）
 func getSSHConfig(s *session.Session) (*ssh.ClientConfig, func(), error) {
-	// 默认忽略主机密钥验证
-	hostKeyCallback := ssh.InsecureIgnoreHostKey()
-
-	// 如果配置中启用了严格主机密钥验证，则使用 known_hosts
-	cfg, err := config.LoadGlobalConfig()
-	if err == nil && cfg.SSH.StrictHostKey {
-		knownHostsPath, err := config.GetKnownHostsPath()
-		if err == nil && knownHostsPath != "" {
-			if _, statErr := os.Stat(knownHostsPath); statErr == nil {
-				// 文件存在，使用 known_hosts 验证
-				hostKeyCallback, err = knownhosts.New(knownHostsPath)
-				if err != nil {
-					// 如果创建 known_hosts 回调失败，回退到忽略
-					hostKeyCallback = ssh.InsecureIgnoreHostKey()
-				}
-			}
-		}
-	}
-
 	sshConfig := &ssh.ClientConfig{
 		User:            s.User,
-		HostKeyCallback: hostKeyCallback,
+		HostKeyCallback: getHostKeyCallback(),
 	}
 
 	var cleanup func()
@@ -301,28 +365,9 @@ func getSSHConfig(s *session.Session) (*ssh.ClientConfig, func(), error) {
 
 // getSSHConfigForAuthMethod 为特定的认证方法创建 SSH 配置
 func getSSHConfigForAuthMethod(s *session.Session, authMethod session.AuthMethod) (*ssh.ClientConfig, func(), error) {
-	// 默认忽略主机密钥验证
-	hostKeyCallback := ssh.InsecureIgnoreHostKey()
-
-	// 如果配置中启用了严格主机密钥验证，则使用 known_hosts
-	cfg, err := config.LoadGlobalConfig()
-	if err == nil && cfg.SSH.StrictHostKey {
-		knownHostsPath, err := config.GetKnownHostsPath()
-		if err == nil && knownHostsPath != "" {
-			if _, statErr := os.Stat(knownHostsPath); statErr == nil {
-				// 文件存在，使用 known_hosts 验证
-				hostKeyCallback, err = knownhosts.New(knownHostsPath)
-				if err != nil {
-					// 如果创建 known_hosts 回调失败，回退到忽略
-					hostKeyCallback = ssh.InsecureIgnoreHostKey()
-				}
-			}
-		}
-	}
-
 	sshConfig := &ssh.ClientConfig{
 		User:            s.User,
-		HostKeyCallback: hostKeyCallback,
+		HostKeyCallback: getHostKeyCallback(),
 	}
 
 	var cleanup func()
@@ -614,32 +659,8 @@ func connectInteractive(s *session.Session, config *ssh.ClientConfig) error {
 	return nil
 }
 
-// connectWithPassword 使用密码认证建立 SSH 连接
-func connectWithPassword(s *session.Session) error {
-	config, cleanup, err := getSSHConfig(s)
-	if err != nil {
-		return err
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-	return connectInteractive(s, config)
-}
-
-// connectWithKey 使用密钥认证建立 SSH 连接
-func connectWithKey(s *session.Session) error {
-	config, cleanup, err := getSSHConfig(s)
-	if err != nil {
-		return err
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-	return connectInteractive(s, config)
-}
-
-// connectWithAgent 使用 SSH Agent 建立 SSH 连接
-func connectWithAgent(s *session.Session) error {
+// connectSingle 使用单一认证方式建立交互式 SSH 连接
+func connectSingle(s *session.Session) error {
 	config, cleanup, err := getSSHConfig(s)
 	if err != nil {
 		return err
@@ -677,12 +698,8 @@ func ConnectWithIO(s *session.Session, stdin io.Reader, stdout, stderr io.Writer
 	}
 
 	switch s.AuthType {
-	case session.AuthTypePassword:
-		return connectWithPasswordIO(s, stdin, stdout, stderr)
-	case session.AuthTypeKey:
-		return connectWithKeyIO(s, stdin, stdout, stderr)
-	case session.AuthTypeAgent:
-		return connectWithAgentIO(s, stdin, stdout, stderr)
+	case session.AuthTypePassword, session.AuthTypeKey, session.AuthTypeAgent:
+		return connectSingleIO(s, stdin, stdout, stderr)
 	default:
 		return fmt.Errorf("unsupported auth type: %s", s.AuthType)
 	}
@@ -785,32 +802,8 @@ func connectWithIO(s *session.Session, stdin io.Reader, stdout, stderr io.Writer
 	return nil
 }
 
-// connectWithPasswordIO 使用密码认证建立 SSH 连接（支持自定义 IO）
-func connectWithPasswordIO(s *session.Session, stdin io.Reader, stdout, stderr io.Writer) error {
-	config, cleanup, err := getSSHConfig(s)
-	if err != nil {
-		return err
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-	return connectWithIO(s, stdin, stdout, stderr, config)
-}
-
-// connectWithKeyIO 使用密钥认证建立 SSH 连接（支持自定义 IO）
-func connectWithKeyIO(s *session.Session, stdin io.Reader, stdout, stderr io.Writer) error {
-	config, cleanup, err := getSSHConfig(s)
-	if err != nil {
-		return err
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-	return connectWithIO(s, stdin, stdout, stderr, config)
-}
-
-// connectWithAgentIO 使用 SSH Agent 建立 SSH 连接（支持自定义 IO）
-func connectWithAgentIO(s *session.Session, stdin io.Reader, stdout, stderr io.Writer) error {
+// connectSingleIO 使用单一认证方式建立 SSH 连接（支持自定义 IO）
+func connectSingleIO(s *session.Session, stdin io.Reader, stdout, stderr io.Writer) error {
 	config, cleanup, err := getSSHConfig(s)
 	if err != nil {
 		return err

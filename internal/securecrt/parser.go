@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -341,10 +342,8 @@ func decryptAESCBC(ciphertext, key, iv []byte) ([]byte, error) {
 
 	checksum := padded[4+plaintextLen : 4+plaintextLen+sha256.Size]
 	expected := sha256.Sum256(plaintext)
-	for i := 0; i < sha256.Size; i++ {
-		if checksum[i] != expected[i] {
-			return nil, fmt.Errorf("checksum mismatch: wrong passphrase?")
-		}
+	if subtle.ConstantTimeCompare(checksum, expected[:]) != 1 {
+		return nil, fmt.Errorf("checksum mismatch: wrong passphrase?")
 	}
 
 	return plaintext, nil
@@ -390,8 +389,8 @@ func (s *Session) HasEncryptedPassword() bool {
 	return s.EncryptedPassword != ""
 }
 
-// ConvertToXSCSession converts a SecureCRT session to xsc session format
-func (s *Session) ConvertToXSCSession() map[string]interface{} {
+// ConvertToXSSHSession converts a SecureCRT session to xssh session format
+func (s *Session) ConvertToXSSHSession() map[string]interface{} {
 	result := map[string]interface{}{
 		"host": s.Hostname,
 		"port": s.Port,

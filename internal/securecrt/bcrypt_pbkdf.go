@@ -44,14 +44,18 @@ func bcryptPbkdfKey(password, salt []byte, rounds, keyLen int) ([]byte, error) {
 		cnt[2] = byte(block >> 8)
 		cnt[3] = byte(block)
 		h.Write(cnt)
-		bcryptHashBlock(tmp, shapass, h.Sum(shasalt))
+		if err := bcryptHashBlock(tmp, shapass, h.Sum(shasalt)); err != nil {
+			return nil, err
+		}
 
 		out := make([]byte, bcryptBlockSize)
 		copy(out, tmp)
 		for i := 2; i <= rounds; i++ {
 			h.Reset()
 			h.Write(tmp)
-			bcryptHashBlock(tmp, shapass, h.Sum(shasalt))
+			if err := bcryptHashBlock(tmp, shapass, h.Sum(shasalt)); err != nil {
+				return nil, err
+			}
 			for j := 0; j < len(out); j++ {
 				out[j] ^= tmp[j]
 			}
@@ -66,10 +70,10 @@ func bcryptPbkdfKey(password, salt []byte, rounds, keyLen int) ([]byte, error) {
 
 var bcryptMagic = []byte("OxychromaticBlowfishSwatDynamite")
 
-func bcryptHashBlock(out, shapass, shasalt []byte) {
+func bcryptHashBlock(out, shapass, shasalt []byte) error {
 	c, err := blowfish.NewSaltedCipher(shapass, shasalt)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	for i := 0; i < 64; i++ {
 		blowfish.ExpandKey(shasalt, c)
@@ -85,4 +89,5 @@ func bcryptHashBlock(out, shapass, shasalt []byte) {
 	for i := 0; i < 32; i += 4 {
 		out[i+3], out[i+2], out[i+1], out[i] = out[i], out[i+1], out[i+2], out[i+3]
 	}
+	return nil
 }

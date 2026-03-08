@@ -2,24 +2,24 @@
 
 ## 概述
 
-在 xsc 项目中新增 `xftp` 可执行文件，实现 TUI 版本的 SFTP 文件管理器，作为 SecureFX 的终端替代方案。完全复用 xsc 的 session 管理体系，将 SSH 登录行为替换为 SFTP 文件操作。
+在 xssh 项目中新增 `xftp` 可执行文件，实现 TUI 版本的 SFTP 文件管理器，作为 SecureFX 的终端替代方案。完全复用 xssh 的 session 管理体系，将 SSH 登录行为替换为 SFTP 文件操作。
 
 ## 架构决策
 
 | # | 决策 | 选择 | 理由 | 来源 |
 |---|------|------|------|------|
 | 1 | TUI 布局 | 经典双面板（左本地、右远程） | 类 SecureFX/WinSCP，最直观 | A+B 共识 |
-| 2 | 启动流程 | 无参数显示帮助，`tui` 启动选择器 | 与 xsc 保持一致（用户确认） | 用户决策 |
-| 3 | 键盘操作 | Vim 风格 | 与 xsc 一致 | A+B 共识 |
+| 2 | 启动流程 | 无参数显示帮助，`tui` 启动选择器 | 与 xssh 保持一致（用户确认） | 用户决策 |
+| 3 | 键盘操作 | Vim 风格 | 与 xssh 一致 | A+B 共识 |
 | 4 | 代码共享 | 直接 import session/ssh/config，独立 TUI | 不重构现有代码 | A+B 共识 |
 | 5 | FileSystem 接口 | 精简版（浏览操作），传输层直接用 sftp.Client | 传输需进度回调，简单 io.Reader 不够 | A 提出，Reviewer 采纳 |
 | 6 | FilePanel | 独立 Bubble Tea Model（有 Update/View） | 双面板各自有独立状态 | B 提出，Reviewer 采纳 |
-| 7 | TUI 文件组织 | 多文件拆分（9个文件） | xftp 复杂度高于 xsc | A+B 共识 |
+| 7 | TUI 文件组织 | 多文件拆分（9个文件） | xftp 复杂度高于 xssh | A+B 共识 |
 | 8 | 传输模式 | channel + tea.Cmd，MVP 串行传输 | Bubble Tea 最佳实践 | B 提出 |
 | 9 | 断线处理 | 不自动重连，用户手动 :reconnect | 避免数据不一致 | A+B 共识 |
 | 10 | 目录加载 | 懒加载（只加载当前一层） | 大目录性能 | B 提出 |
 | 11 | SSH keepalive | 纳入 MVP | SFTP 场景长时间浏览需要 | 用户确认 |
-| 12 | FindSession() | 从 xsc 抽取到 session 包 | xsc 和 xftp 共用 | 用户确认 |
+| 12 | FindSession() | 从 xssh 抽取到 session 包 | xssh 和 xftp 共用 | 用户确认 |
 
 ## 目录结构
 
@@ -98,7 +98,7 @@ internal/xftp/
 ## 启动流程
 
 ```
-xftp                        → 显示帮助信息（与 xsc 一致）
+xftp                        → 显示帮助信息（与 xssh 一致）
 xftp tui                    → 启动 TUI（含 session 选择器）
 xftp <session-path>         → 直连指定 session
 xftp connect <session-path> → 同上（CLI 风格）

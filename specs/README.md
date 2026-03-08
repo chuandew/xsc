@@ -1,10 +1,10 @@
-# XSC 功能规范文档
+# XSSH 功能规范文档
 
-本文档使用 Gherkin 语法（Cucumber/Behavior Driven Development）描述 XSC 项目的功能规范。
+本文档使用 Gherkin 语法（Cucumber/Behavior Driven Development）描述 XSSH 项目的功能规范。
 
 ## 文件说明
 
-- **xsc.feature** - 完整的功能规范，包含所有用户场景
+- **xssh.feature** - 完整的功能规范，包含所有用户场景
 
 ## 规范结构
 

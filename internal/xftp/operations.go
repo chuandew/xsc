@@ -3,6 +3,7 @@ package xftp
 import (
 	"fmt"
 	"path"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -80,6 +81,38 @@ func (m Model) handlePaste() (tea.Model, tea.Cmd) {
 		destDir = m.localPanel.cwd
 	}
 
+	// 检查目标是否存在同名文件
+	var targetFS FileSystem
+	if m.yankSide == PanelLeft {
+		targetFS = m.remoteFS
+	} else {
+		targetFS = m.localPanel.fs
+	}
+
+	var conflicts []string
+	for _, yf := range m.yankFiles {
+		destPath := path.Join(destDir, yf.Name)
+		if _, err := targetFS.Stat(destPath); err == nil {
+			conflicts = append(conflicts, yf.Name)
+		}
+	}
+
+	if len(conflicts) > 0 {
+		// 存在冲突，进入覆盖确认模式
+		m.overwriteConflicts = conflicts
+		m.pendingPasteDir = dir
+		m.pendingPasteDestDir = destDir
+		m.mode = ModeOverwriteConfirm
+		m.statusMsg = fmt.Sprintf("目标已存在 %d 个同名文件/目录，是否覆盖？(y/n)", len(conflicts))
+		return m, nil
+	}
+
+	// 无冲突，直接执行
+	return m.executePaste(dir, destDir)
+}
+
+// executePaste 执行粘贴传输
+func (m Model) executePaste(dir Direction, destDir string) (tea.Model, tea.Cmd) {
 	// 添加传输任务
 	for _, yf := range m.yankFiles {
 		if yf.IsDir {
@@ -100,6 +133,28 @@ func (m Model) handlePaste() (tea.Model, tea.Cmd) {
 		m.transfer.StartNext(m.remoteFS.SFTPClient()),
 		m.transfer.ListenProgress(),
 	)
+}
+
+// handleOverwriteConfirmKey 处理覆盖确认按键
+func (m Model) handleOverwriteConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		// 确认覆盖，执行传输
+		dir := m.pendingPasteDir
+		destDir := m.pendingPasteDestDir
+		m.mode = ModeNormal
+		m.overwriteConflicts = nil
+		m.pendingPasteDestDir = ""
+		return m.executePaste(dir, destDir)
+	case "n", "N", "esc":
+		// 取消
+		m.mode = ModeNormal
+		m.overwriteConflicts = nil
+		m.pendingPasteDestDir = ""
+		m.statusMsg = "已取消"
+		return m, nil
+	}
+	return m, nil
 }
 
 // handleDelete 触发删除确认对话框
@@ -256,8 +311,22 @@ func (m Model) handleInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// validateFileName 验证文件/目录名不包含路径穿越字符
+func validateFileName(name string) error {
+	if strings.Contains(name, "/") || strings.Contains(name, "..") {
+		return fmt.Errorf("名称不能包含 '/' 或 '..'")
+	}
+	return nil
+}
+
 // executeMkdir 执行创建目录
 func (m Model) executeMkdir(name string) (tea.Model, tea.Cmd) {
+	if err := validateFileName(name); err != nil {
+		m.statusMsg = err.Error()
+		m.inputOp = InputOpNone
+		return m, nil
+	}
+
 	panelSide := m.inputPanel
 	m.inputOp = InputOpNone
 
@@ -286,6 +355,13 @@ func (m Model) executeMkdir(name string) (tea.Model, tea.Cmd) {
 
 // executeRename 执行重命名
 func (m Model) executeRename(newName string) (tea.Model, tea.Cmd) {
+	if err := validateFileName(newName); err != nil {
+		m.statusMsg = err.Error()
+		m.inputOp = InputOpNone
+		m.inputOldName = ""
+		return m, nil
+	}
+
 	panelSide := m.inputPanel
 	oldName := m.inputOldName
 	m.inputOp = InputOpNone

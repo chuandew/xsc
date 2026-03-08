@@ -17,14 +17,16 @@ import (
 type Mode int
 
 const (
-	ModeNormal   Mode = iota // 普通模式
-	ModeSearch               // 搜索模式
-	ModeCommand              // 命令模式
-	ModeHelp                 // 帮助模式
-	ModeError                // 错误模式
-	ModeConfirm              // 确认对话框模式
-	ModeInput                // 输入对话框模式（mkdir/rename）
-	ModeSelector             // 会话选择器模式
+	ModeNormal           Mode = iota // 普通模式
+	ModeSearch                       // 搜索模式
+	ModeCommand                      // 命令模式
+	ModeHelp                         // 帮助模式
+	ModeError                        // 错误模式
+	ModeConfirm                      // 确认对话框模式
+	ModeInput                        // 输入对话框模式（mkdir/rename）
+	ModeSelector                     // 会话选择器模式
+	ModeTransferResult               // 传输结果通知模式
+	ModeOverwriteConfirm             // 覆盖确认模式
 )
 
 // yankEntry yank 缓冲区条目
@@ -85,6 +87,14 @@ type Model struct {
 
 	// 会话选择器
 	selector Selector
+
+	// 传输结果通知
+	transferResult *TransferResultMsg
+
+	// 覆盖确认（paste 冲突）
+	overwriteConflicts  []string
+	pendingPasteDir     Direction
+	pendingPasteDestDir string
 }
 
 // NewModel 创建 xftp Model
@@ -218,11 +228,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleConnected(msg)
 
 	case ConnectErrMsg:
-		m.statusMsg = fmt.Sprintf("连接失败: %v", msg.Err)
+		// 连接失败：显示错误，用户必须确认后返回选择器
 		m.err = msg.Err
-		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg {
-			return errorDismissMsg{}
-		})
+		m.mode = ModeError
+		m.statusMsg = fmt.Sprintf("连接失败: %v", msg.Err)
+		return m, nil
 
 	case DisconnectedMsg:
 		m.connected = false
@@ -280,6 +290,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.transfer.ListenProgress()
 
 	case TransferCompleteMsg:
+		// 记录完成的文件统计
+		for _, t := range m.transfer.Tasks() {
+			if t.ID == msg.TaskID && t.Status == StatusCompleted {
+				m.transfer.RecordFileComplete(t.Size)
+				break
+			}
+		}
 		m.statusMsg = "传输完成"
 		// 刷新两个面板
 		cmds := []tea.Cmd{
@@ -292,10 +309,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.transfer.StartNext(m.remoteFS.SFTPClient()),
 				m.transfer.ListenProgress(),
 			)
+		} else {
+			// 所有传输完成，显示结果通知
+			files, dirs, bytes, failed := m.transfer.Stats()
+			m.transferResult = &TransferResultMsg{
+				Files:      files,
+				Dirs:       dirs,
+				TotalBytes: bytes,
+				Failed:     failed,
+			}
+			m.mode = ModeTransferResult
+			m.transfer.ResetStats()
 		}
 		return m, tea.Batch(cmds...)
 
 	case TransferErrorMsg:
+		m.transfer.RecordFailed()
 		m.statusMsg = fmt.Sprintf("传输失败: %v", msg.Err)
 		// 如果还有等待的任务，继续执行
 		if m.transfer.HasPending() && m.remoteFS != nil {
@@ -304,6 +333,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.transfer.ListenProgress(),
 			)
 		}
+		// 所有传输完成（含失败），显示结果通知
+		files, dirs, bytes, failed := m.transfer.Stats()
+		m.transferResult = &TransferResultMsg{
+			Files:      files,
+			Dirs:       dirs,
+			TotalBytes: bytes,
+			Failed:     failed,
+		}
+		m.mode = ModeTransferResult
+		m.transfer.ResetStats()
 		return m, nil
 	}
 
@@ -345,9 +384,34 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// 错误模式：任意键关闭
 	if m.mode == ModeError {
+		// 连接失败时返回会话选择器
+		if m.session != nil && !m.connected {
+			if m.remoteFS != nil {
+				m.remoteFS.Close()
+				m.remoteFS = nil
+			}
+			m.session = nil
+			m.mode = ModeSelector
+			m.err = nil
+			m.statusMsg = "请选择会话"
+			m.selector = NewSelector()
+			return m, m.selector.Init()
+		}
 		m.mode = ModeNormal
 		m.err = nil
 		return m, nil
+	}
+
+	// 传输结果通知：任意键关闭
+	if m.mode == ModeTransferResult {
+		m.mode = ModeNormal
+		m.transferResult = nil
+		return m, nil
+	}
+
+	// 覆盖确认模式
+	if m.mode == ModeOverwriteConfirm {
+		return m.handleOverwriteConfirmKey(msg)
 	}
 
 	// 命令模式
@@ -459,7 +523,17 @@ func (m Model) handleCommandKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) executeCommand(cmd string) (tea.Model, tea.Cmd) {
 	switch cmd {
 	case "q", "quit":
-		return m, tea.Quit
+		// 文件传输模式下返回选择器，而非退出程序
+		if m.remoteFS != nil {
+			m.remoteFS.Close()
+			m.remoteFS = nil
+		}
+		m.connected = false
+		m.session = nil
+		m.mode = ModeSelector
+		m.selector = NewSelector()
+		m.statusMsg = "请选择会话"
+		return m, m.selector.Init()
 
 	case "reconnect":
 		if m.session == nil {
@@ -569,7 +643,7 @@ func (m *Model) updatePanelSizes() {
 	if m.transfer != nil && m.transfer.ActiveTask() != nil {
 		reserved = 2
 	}
-	panelHeight := m.height - reserved
+	panelHeight := m.height - reserved - 2 // 减去面板边框高度（RoundedBorder 上+下）
 	if panelHeight < 3 {
 		panelHeight = 3
 	}
@@ -598,6 +672,11 @@ func (m Model) View() string {
 		return m.renderError()
 	}
 
+	// 传输结果通知
+	if m.mode == ModeTransferResult {
+		return m.renderTransferResult()
+	}
+
 	// 渲染双面板
 	leftView := m.renderPanel(PanelLeft)
 	rightView := m.renderPanel(PanelRight)
@@ -624,6 +703,12 @@ func (m Model) View() string {
 	if m.mode == ModeConfirm {
 		confirmBar := m.renderConfirmBar()
 		return lipgloss.JoinVertical(lipgloss.Left, panels, statusBar, confirmBar)
+	}
+
+	// 覆盖确认对话框
+	if m.mode == ModeOverwriteConfirm {
+		overwriteBar := m.renderOverwriteConfirmBar()
+		return lipgloss.JoinVertical(lipgloss.Left, panels, statusBar, overwriteBar)
 	}
 
 	// 输入对话框
@@ -659,6 +744,12 @@ func (m Model) renderConfirmBar() string {
 	return ConfirmMsgStyle.Width(m.width).Padding(0, 1).Render(msg)
 }
 
+// renderOverwriteConfirmBar 渲染覆盖确认对话框
+func (m Model) renderOverwriteConfirmBar() string {
+	msg := fmt.Sprintf("目标已存在 %d 个同名文件/目录，是否覆盖？(y/n)", len(m.overwriteConflicts))
+	return ConfirmMsgStyle.Width(m.width).Padding(0, 1).Render(msg)
+}
+
 // renderInputBar 渲染输入对话框
 func (m Model) renderInputBar() string {
 	inputWithHint := m.opInput.View() + "  (Esc:取消 Enter:确认)"
@@ -690,7 +781,7 @@ func (m Model) renderPanel(side PanelSide) string {
 		style = InactivePanelStyle
 	}
 
-	return style.Render(content)
+	return style.Width(panel.width - 2).Height(panel.height).Render(content)
 }
 
 // renderStatusBar 渲染状态栏
@@ -808,6 +899,11 @@ func (m Model) renderError() string {
 		errMsg = m.err.Error()
 	}
 
+	hint := "按任意键返回..."
+	if m.session != nil && !m.connected {
+		hint = "按任意键返回会话列表..."
+	}
+
 	style := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(colorRed)).
 		Background(lipgloss.Color(colorBg)).
@@ -815,7 +911,44 @@ func (m Model) renderError() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(colorRed))
 
-	return style.Render(errMsg + "\n\n按任意键返回...")
+	return style.Render(errMsg + "\n\n" + hint)
+}
+
+// renderTransferResult 渲染传输结果通知
+func (m Model) renderTransferResult() string {
+	r := m.transferResult
+	if r == nil {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, "传输完成！")
+	lines = append(lines, "")
+	if r.Dirs > 0 {
+		lines = append(lines, fmt.Sprintf("  目录: %d 个", r.Dirs))
+	}
+	lines = append(lines, fmt.Sprintf("  文件: %d 个", r.Files))
+	lines = append(lines, fmt.Sprintf("  总计: %s", formatSize(r.TotalBytes)))
+	if r.Failed > 0 {
+		lines = append(lines, fmt.Sprintf("  失败: %d 个", r.Failed))
+	}
+	lines = append(lines, "")
+	lines = append(lines, "按任意键继续...")
+
+	style := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorGreen)).
+		Background(lipgloss.Color(colorBg)).
+		Padding(1).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(colorGreen))
+
+	if r.Failed > 0 {
+		style = style.
+			Foreground(lipgloss.Color(colorOrange)).
+			BorderForeground(lipgloss.Color(colorOrange))
+	}
+
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // handleSessionSelected 处理用户选择 session 后的状态转换
@@ -868,4 +1001,3 @@ func Run(s *session.Session) error {
 
 	return nil
 }
-

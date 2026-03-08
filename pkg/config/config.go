@@ -18,7 +18,16 @@ type GlobalConfig struct {
 // SSHConfig SSH配置
 type SSHConfig struct {
 	KnownHostsFile string `yaml:"known_hosts_file,omitempty"`
-	StrictHostKey  bool   `yaml:"strict_host_key,omitempty"`
+	StrictHostKey  *bool  `yaml:"strict_host_key,omitempty"`
+}
+
+// IsStrictHostKey 返回是否启用严格主机密钥验证
+// 默认为 true（安全优先），仅当显式设为 false 时才跳过验证
+func (c SSHConfig) IsStrictHostKey() bool {
+	if c.StrictHostKey == nil {
+		return true // 默认启用
+	}
+	return *c.StrictHostKey
 }
 
 // SecureCRTConfig SecureCRT配置
@@ -76,7 +85,7 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 		},
 		SSH: SSHConfig{
 			KnownHostsFile: "",
-			StrictHostKey:  false,
+			StrictHostKey:  nil, // 默认 nil → IsStrictHostKey() 返回 true
 		},
 	}
 
@@ -126,8 +135,8 @@ func GetSessionsDir() (string, error) {
 
 	sessionsDir := filepath.Join(homeDir, ".xsc", "sessions")
 
-	// 确保目录存在
-	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
+	// 确保目录存在（使用 0700 限制访问权限，因为可能包含敏感信息）
+	if err := os.MkdirAll(sessionsDir, 0700); err != nil {
 		return "", err
 	}
 
@@ -143,8 +152,8 @@ func GetConfigDir() (string, error) {
 
 	configDir := filepath.Join(homeDir, ".xsc")
 
-	// 确保目录存在
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	// 确保目录存在（使用 0700 限制访问权限，因为可能包含密码等敏感信息）
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return "", err
 	}
 
@@ -171,7 +180,7 @@ func GetKnownHostsPath() (string, error) {
 		return sshKnownHosts, nil
 	}
 
-	// 使用 xsc 的 known_hosts
+	// 使用 xssh 的 known_hosts
 	configDir, err := GetConfigDir()
 	if err != nil {
 		return "", err

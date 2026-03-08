@@ -22,18 +22,18 @@ type FileEntry struct {
 // FilePanel 文件面板子组件（本地/远程共用）
 // 实现独立的 Update/View，作为 Bubble Tea 子组件
 type FilePanel struct {
-	side    PanelSide
-	fs      FileSystem
-	cwd     string
-	entries []FileEntry // 当前显示的条目（可能经过过滤）
+	side       PanelSide
+	fs         FileSystem
+	cwd        string
+	entries    []FileEntry // 当前显示的条目（可能经过过滤）
 	allEntries []FileEntry // 全部条目（未过滤）
-	cursor  int
-	offset  int // 虚拟滚动偏移
-	width   int
-	height  int
-	loading bool
-	err     error
-	filter  string // 当前搜索过滤词
+	cursor     int
+	offset     int // 虚拟滚动偏移
+	width      int
+	height     int
+	loading    bool
+	err        error
+	filter     string // 当前搜索过滤词
 }
 
 // NewFilePanel 创建文件面板
@@ -94,6 +94,10 @@ func (p FilePanel) handleKey(msg tea.KeyMsg) (FilePanel, tea.Cmd) {
 		p.PageUp()
 	case key.Matches(msg, keys.HalfPageDown):
 		p.PageDown()
+	case key.Matches(msg, keys.PageUp):
+		p.FullPageUp()
+	case key.Matches(msg, keys.PageDown):
+		p.FullPageDown()
 	case key.Matches(msg, keys.GoToTop):
 		p.GoTop()
 	case key.Matches(msg, keys.GoToBottom):
@@ -198,6 +202,29 @@ func (p *FilePanel) PageUp() {
 func (p *FilePanel) PageDown() {
 	visibleHeight := p.viewHeight()
 	p.cursor += visibleHeight / 2
+	if p.cursor >= len(p.entries) {
+		p.cursor = len(p.entries) - 1
+	}
+	if p.cursor < 0 {
+		p.cursor = 0
+	}
+	p.ensureVisible()
+}
+
+// FullPageUp 全页上滚
+func (p *FilePanel) FullPageUp() {
+	visibleHeight := p.viewHeight()
+	p.cursor -= visibleHeight
+	if p.cursor < 0 {
+		p.cursor = 0
+	}
+	p.ensureVisible()
+}
+
+// FullPageDown 全页下滚
+func (p *FilePanel) FullPageDown() {
+	visibleHeight := p.viewHeight()
+	p.cursor += visibleHeight
 	if p.cursor >= len(p.entries) {
 		p.cursor = len(p.entries) - 1
 	}
