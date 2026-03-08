@@ -1,6 +1,10 @@
 package xftp
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"strings"
 	"testing"
 )
 
@@ -47,7 +51,6 @@ func TestTransferManagerTasksReturnsSnapshot(t *testing.T) {
 	tm.AddTask("/a", "/b", Upload, 100)
 
 	snapshot := tm.Tasks()
-	// 修改快照不应影响原始数据
 	snapshot[0].Status = StatusCompleted
 
 	original := tm.Tasks()
@@ -67,6 +70,32 @@ func TestTransferManagerHasPending(t *testing.T) {
 	tm.AddTask("/a", "/b", Upload, 100)
 	if !tm.HasPending() {
 		t.Error("添加任务后应有 pending 任务")
+	}
+}
+
+// TestTransferManagerHasPendingAfterActive 测试任务激活后 HasPending
+func TestTransferManagerHasPendingAfterActive(t *testing.T) {
+	tm := NewTransferManager()
+	tm.AddTask("/a", "/b", Upload, 100)
+	tm.AddTask("/c", "/d", Download, 200)
+
+	// 手动标记第一个为 active
+	tm.mu.Lock()
+	tm.tasks[0].Status = StatusActive
+	tm.mu.Unlock()
+
+	if !tm.HasPending() {
+		t.Error("第二个任务仍为 pending")
+	}
+
+	// 标记所有为 completed
+	tm.mu.Lock()
+	tm.tasks[0].Status = StatusCompleted
+	tm.tasks[1].Status = StatusCompleted
+	tm.mu.Unlock()
+
+	if tm.HasPending() {
+		t.Error("所有任务完成后不应有 pending")
 	}
 }
 
@@ -92,6 +121,34 @@ func TestTransferManagerCancel(t *testing.T) {
 	}
 }
 
+// TestTransferManagerCancelWithActive 测试取消活跃任务
+func TestTransferManagerCancelWithActive(t *testing.T) {
+	tm := NewTransferManager()
+	tm.AddTask("/a", "/b", Upload, 100)
+
+	// 设置活跃任务和 cancel 函数
+	ctx, cancel := context.WithCancel(context.Background())
+	tm.mu.Lock()
+	tm.tasks[0].Status = StatusActive
+	tm.active = &tm.tasks[0]
+	tm.cancelFn = cancel
+	tm.mu.Unlock()
+
+	tm.Cancel()
+
+	if tm.ActiveTask() != nil {
+		t.Error("Cancel 后 ActiveTask 应为 nil")
+	}
+
+	// 验证 context 被取消
+	select {
+	case <-ctx.Done():
+		// 正确
+	default:
+		t.Error("Cancel 应取消 context")
+	}
+}
+
 // TestTransferManagerClearCompleted 测试清除已完成任务
 func TestTransferManagerClearCompleted(t *testing.T) {
 	tm := NewTransferManager()
@@ -99,11 +156,9 @@ func TestTransferManagerClearCompleted(t *testing.T) {
 	tm.AddTask("/c", "/d", Download, 200)
 	tm.AddTask("/e", "/f", Upload, 300)
 
-	// 手动设置任务状态来测试清理逻辑
 	tm.mu.Lock()
 	tm.tasks[0].Status = StatusCompleted
 	tm.tasks[1].Status = StatusFailed
-	// tasks[2] 保持 StatusPending
 	tm.mu.Unlock()
 
 	tm.ClearCompleted()
@@ -134,6 +189,16 @@ func TestTransferManagerClearCompletedAlsoClearsCancelled(t *testing.T) {
 	}
 }
 
+// TestTransferManagerClearCompletedEmpty 测试清除空列表不 panic
+func TestTransferManagerClearCompletedEmpty(t *testing.T) {
+	tm := NewTransferManager()
+	tm.ClearCompleted()
+	tasks := tm.Tasks()
+	if len(tasks) != 0 {
+		t.Errorf("期望 0 个任务，实际 %d", len(tasks))
+	}
+}
+
 // TestTransferManagerIDIncrement 测试 ID 递增
 func TestTransferManagerIDIncrement(t *testing.T) {
 	tm := NewTransferManager()
@@ -155,7 +220,6 @@ func TestTransferManagerActiveTaskReturnsSnapshot(t *testing.T) {
 	tm := NewTransferManager()
 	tm.AddTask("/a", "/b", Upload, 100)
 
-	// 手动设置活跃任务
 	tm.mu.Lock()
 	tm.tasks[0].Status = StatusActive
 	tm.active = &tm.tasks[0]
@@ -166,11 +230,161 @@ func TestTransferManagerActiveTaskReturnsSnapshot(t *testing.T) {
 		t.Fatal("ActiveTask 不应返回 nil")
 	}
 
-	// 修改返回值不应影响原始数据
 	active.Status = StatusFailed
 
 	active2 := tm.ActiveTask()
 	if active2.Status != StatusActive {
 		t.Error("修改 ActiveTask 返回值不应影响原始数据")
+	}
+}
+
+// TestTransferManagerStats 测试传输统计
+func TestTransferManagerStats(t *testing.T) {
+	tm := NewTransferManager()
+
+	files, dirs, bytes, failed := tm.Stats()
+	if files != 0 || dirs != 0 || bytes != 0 || failed != 0 {
+		t.Error("新管理器的统计应全为 0")
+	}
+
+	tm.RecordFileComplete(1024)
+	tm.RecordFileComplete(2048)
+	tm.RecordFailed()
+
+	files, dirs, bytes, failed = tm.Stats()
+	if files != 2 {
+		t.Errorf("期望 2 个文件，实际 %d", files)
+	}
+	if bytes != 3072 {
+		t.Errorf("期望 3072 字节，实际 %d", bytes)
+	}
+	if failed != 1 {
+		t.Errorf("期望 1 个失败，实际 %d", failed)
+	}
+}
+
+// TestTransferManagerResetStats 测试重置统计
+func TestTransferManagerResetStats(t *testing.T) {
+	tm := NewTransferManager()
+	tm.RecordFileComplete(1024)
+	tm.RecordFailed()
+
+	tm.ResetStats()
+
+	files, dirs, bytes, failed := tm.Stats()
+	if files != 0 || dirs != 0 || bytes != 0 || failed != 0 {
+		t.Error("重置后统计应全为 0")
+	}
+}
+
+// TestTransferManagerRecordMultipleFailed 测试多次记录失败
+func TestTransferManagerRecordMultipleFailed(t *testing.T) {
+	tm := NewTransferManager()
+	tm.RecordFailed()
+	tm.RecordFailed()
+	tm.RecordFailed()
+
+	_, _, _, failed := tm.Stats()
+	if failed != 3 {
+		t.Errorf("期望 3 个失败，实际 %d", failed)
+	}
+}
+
+// TestCopyWithProgress 测试带进度回调的复制
+func TestCopyWithProgress(t *testing.T) {
+	ctx := context.Background()
+	src := strings.NewReader("hello world test data for progress copy")
+	dst := &bytes.Buffer{}
+	ch := make(chan progressUpdate, 64)
+
+	err := copyWithProgress(ctx, dst, src, 1, ch)
+	if err != nil {
+		t.Fatalf("copyWithProgress 失败: %v", err)
+	}
+
+	if dst.String() != "hello world test data for progress copy" {
+		t.Errorf("复制内容不匹配: %s", dst.String())
+	}
+
+	// 应至少收到一条进度更新（EOF 时的最终报告）
+	hasUpdate := false
+	for {
+		select {
+		case update := <-ch:
+			hasUpdate = true
+			if update.taskID != 1 {
+				t.Errorf("期望 taskID 1，实际 %d", update.taskID)
+			}
+		default:
+			goto done
+		}
+	}
+done:
+	if !hasUpdate {
+		t.Error("应至少收到一条进度更新")
+	}
+}
+
+// TestCopyWithProgressCancelled 测试取消复制
+func TestCopyWithProgressCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	src := strings.NewReader("data that should not be fully copied")
+	dst := &bytes.Buffer{}
+	ch := make(chan progressUpdate, 64)
+
+	err := copyWithProgress(ctx, dst, src, 1, ch)
+	if err == nil {
+		t.Error("取消后应返回错误")
+	}
+}
+
+// TestCopyWithProgressWriteError 测试写入错误
+func TestCopyWithProgressWriteError(t *testing.T) {
+	ctx := context.Background()
+	src := strings.NewReader("data to write")
+	dst := &errorWriter{}
+	ch := make(chan progressUpdate, 64)
+
+	err := copyWithProgress(ctx, dst, src, 1, ch)
+	if err == nil {
+		t.Error("写入错误时应返回错误")
+	}
+}
+
+// errorWriter 模拟写入错误的 Writer
+type errorWriter struct{}
+
+func (w *errorWriter) Write(p []byte) (n int, err error) {
+	return 0, io.ErrClosedPipe
+}
+
+// TestDirectionConstants 测试方向常量
+func TestDirectionConstants(t *testing.T) {
+	if Upload != 0 {
+		t.Errorf("Upload 应为 0，实际 %d", Upload)
+	}
+	if Download != 1 {
+		t.Errorf("Download 应为 1，实际 %d", Download)
+	}
+}
+
+// TestTaskStatusConstants 测试状态常量
+func TestTaskStatusConstants(t *testing.T) {
+	if StatusPending != 0 {
+		t.Errorf("StatusPending 应为 0，实际 %d", StatusPending)
+	}
+	if StatusActive != 1 {
+		t.Errorf("StatusActive 应为 1，实际 %d", StatusActive)
+	}
+	if StatusCompleted != 2 {
+		t.Errorf("StatusCompleted 应为 2，实际 %d", StatusCompleted)
+	}
+	if StatusFailed != 3 {
+		t.Errorf("StatusFailed 应为 3，实际 %d", StatusFailed)
+	}
+	if StatusCancelled != 4 {
+		t.Errorf("StatusCancelled 应为 4，实际 %d", StatusCancelled)
 	}
 }
