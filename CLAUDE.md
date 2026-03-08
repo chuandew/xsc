@@ -80,7 +80,7 @@ Key test files:
 ## Code Conventions
 
 - **Language**: Go 1.21+. Documentation and code comments are written in Chinese.
-- **Import order**: stdlib, then third-party, then local (`github.com/user/xsc/...`)
+- **Import order**: stdlib, then third-party, then local (`github.com/ketor/xsc/...`)
 - **Naming**: PascalCase for exported, camelCase for unexported. Acronyms stay uppercase (`SSH`, `TUI`, `CRT`).
 - **YAML tags**: `yaml:"field_name,omitempty"` on struct fields; internal fields use `yaml:"-"`
 - **Error handling**: wrap with `fmt.Errorf("context: %w", err)` — use `%w` not `%v`

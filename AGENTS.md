@@ -134,8 +134,8 @@ import (
     "github.com/charmbracelet/bubbletea"
     "golang.org/x/crypto/ssh"
 
-    "github.com/user/xsc/internal/session"
-    "github.com/user/xsc/pkg/config"
+    "github.com/ketor/xsc/internal/session"
+    "github.com/ketor/xsc/pkg/config"
 )
 ```
 
