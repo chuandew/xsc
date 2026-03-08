@@ -1,20 +1,31 @@
-# XSSH - XShell CLI
+# XSC - SSH Session Manager & SFTP File Manager
 
-基于 Go 和 Bubble Tea 开发的 SSH 会话管理工具，支持本地 YAML 会话配置，以及导入 SecureCRT、Xshell 和 MobaXterm 会话。
+基于 Go 和 Bubble Tea 开发的终端 SSH 会话管理工具套件，包含两个独立工具：
+
+- **xssh** — TUI SSH 会话管理器，支持 Vim 风格操作
+- **xftp** — TUI SFTP 双面板文件管理器
+
+支持本地 YAML 会话配置，以及直接加载 SecureCRT、Xshell、MobaXterm 会话（含加密密码解密）。
 
 ## 特性
 
-- 🗂️ 文件即会话：通过 YAML 文件管理 SSH 配置，目录结构即分组层级
-- 🖥️ 优雅的 TUI：使用 Bubble Tea 构建的交互式界面，Gruvbox 配色方案
-- 🔍 实时搜索：输入即过滤，支持会话名称模糊匹配
-- 🌳 树形结构：支持无限层级目录组织，Vim 风格折叠操作
-- 🔐 多种认证：支持密码、密钥、SSH Agent、keyboard-interactive
-- 📱 原生体验：使用 Go 原生 SSH 客户端连接，无需依赖外部 `ssh` 或 `sshpass`
-- 📜 自动滚屏：列表内容超出屏幕时自动滚动保持光标可见
-- 🔗 SecureCRT 集成：直接加载 SecureCRT 会话配置，支持加密密码解密和多认证方式
-- 🔗 Xshell 集成：直接加载 Xshell `.xsh` 会话文件，支持 RC4 加密密码解密
-- 🔗 MobaXterm 集成：直接加载 MobaXterm INI 配置文件中的 SSH 书签，支持 AES-CFB-8 加密密码解密
-- ⌨️ 命令自动补全：命令模式下支持 Tab 补全
+### 通用特性
+- 🗂️ **文件即会话**：通过 YAML 文件管理 SSH 配置，目录结构即分组层级
+- 🖥️ **Gruvbox 配色**：统一的暗色主题 TUI 界面
+- 🔍 **实时搜索**：输入即过滤，支持会话名称和文件名模糊匹配
+- 🌳 **树形结构**：支持无限层级目录组织，Vim 风格折叠操作
+- 🔐 **多种认证**：支持密码、密钥、SSH Agent、keyboard-interactive
+- 📱 **原生 SSH**：使用 Go 原生 SSH 客户端，无需依赖外部 `ssh` 或 `sshpass`
+- 🔗 **多源集成**：直接加载 SecureCRT / Xshell / MobaXterm 会话，支持加密密码解密
+- ⌨️ **命令补全**：命令模式下支持 Tab 自动补全
+- 🔒 **TOFU 安全模型**：首次连接自动信任主机密钥，密钥变更时拒绝连接
+
+### xftp 专有特性
+- 📂 **双面板布局**：左侧本地文件系统，右侧远程 SFTP 文件系统
+- 📋 **Yank/Paste 传输**：Vim 风格的 `y` 标记 + `p` 粘贴进行文件传输
+- 📊 **传输结果统计**：传输完成后显示目录数、文件数、总数据量
+- ⚠️ **覆盖确认**：目标存在同名文件/目录时提示用户确认
+- 🔄 **会话内切换**：`:q` 返回会话列表而非退出程序，可快速切换服务器
 
 ## 快速开始
 
@@ -23,13 +34,13 @@
 ```bash
 # 克隆项目
 git clone <repo-url>
-cd xssh
+cd xsc
 
-# 构建
-make build          # 输出到 ./build/xssh
+# 构建（同时构建 xssh 和 xftp）
+make build          # 输出到 ./build/xssh 和 ./build/xftp
 
 # 安装到系统（需要 root 权限）
-make install        # 安装到 /usr/local/bin/xssh
+sudo make install   # 安装到 /usr/local/bin/
 ```
 
 ### 创建第一个会话
@@ -47,29 +58,35 @@ auth_type: "password"
 password: "your_password"
 description: "生产服务器"
 EOF
-
-# 启动 TUI
-xssh tui
 ```
 
-### 基本用法
+### 使用 xssh（SSH 终端）
 
 ```bash
-xssh                      # 显示帮助
-xssh tui                  # 启动 TUI 交互界面
-xssh list                 # 列出所有会话
-xssh connect prod/my-server   # 直接连接指定会话
-xssh connect web          # 模糊匹配连接（匹配名称包含 "web" 的会话）
-xssh import-securecrt     # 将 SecureCRT 会话转换为 xssh 本地格式
-xssh import-xshell        # 将 Xshell 会话转换为 xssh 本地格式
-xssh import-mobaxterm     # 将 MobaXterm 会话转换为 xssh 本地格式
+xssh                           # 显示帮助
+xssh tui                       # 启动 TUI 交互界面
+xssh list                      # 列出所有会话
+xssh connect prod/my-server    # 直接连接指定会话
+xssh connect web               # 模糊匹配连接
+xssh import-securecrt          # 将 SecureCRT 会话转换为本地格式
+xssh import-xshell             # 将 Xshell 会话转换为本地格式
+xssh import-mobaxterm           # 将 MobaXterm 会话转换为本地格式
+```
+
+### 使用 xftp（SFTP 文件管理器）
+
+```bash
+xftp                           # 显示帮助
+xftp tui                       # 启动 TUI 模式（先选择会话再连接）
+xftp <session-path>            # 直接连接指定会话并打开 SFTP
+xftp connect web-server        # 连接指定会话
 ```
 
 ## 会话配置
 
-会话文件存储在 `~/.xsc/sessions/`，使用 YAML 格式。文件系统中的目录结构直接映射为 TUI 中的树形层级。
+会话文件存储在 `~/.xsc/sessions/`，使用 YAML 格式。目录结构直接映射为 TUI 中的树形层级。
 
-### 配置字段说明
+### 配置字段
 
 ```yaml
 host: "192.168.1.100"       # 必填，SSH 主机地址
@@ -85,11 +102,11 @@ description: "生产数据库"    # 可选，会话描述信息
 
 | 认证方式 | auth_type | 必填字段 | 说明 |
 |---------|-----------|---------|------|
-| 密码认证 | `password` | `password` | 密码直接存储在配置文件中，连接时自动发送 |
-| 密钥认证 | `key` | `key_path` | 使用 SSH 私钥文件，支持 ed25519/ecdsa/rsa/dsa |
-| SSH Agent | `agent` | 无 | 使用系统 `ssh-agent`，需确保 Agent 已加载密钥 |
+| 密码认证 | `password` | `password` | 密码直接存储在配置文件中 |
+| 密钥认证 | `key` | `key_path` | 使用 SSH 私钥，支持 ed25519/ecdsa/rsa/dsa |
+| SSH Agent | `agent` | 无 | 使用系统 `ssh-agent` |
 
-> 建议优先使用 **SSH Key** 或 **SSH Agent** 方式以获得更好的安全性。会话文件权限自动设为 0600（仅用户可读写）。
+> 会话文件权限自动设为 0600（仅用户可读写）。建议优先使用 SSH Key 或 SSH Agent。
 
 ### 配置示例
 
@@ -121,7 +138,7 @@ auth_type: "agent"
 description: "堡垒机"
 ```
 
-## TUI 快捷键
+## xssh TUI 快捷键
 
 ### 导航 (Vim 风格)
 | 按键 | 功能 |
@@ -138,12 +155,7 @@ description: "堡垒机"
 | `0` | 跳转到第一行 |
 | `$` | 跳转到最后行 |
 | `^` | 跳转到第一个会话文件 |
-| `n` | 查找下一个匹配 |
-| `N` | 查找上一个匹配 |
-| `:q` / `:quit` | 退出程序 |
-| `Ctrl+c` | 退出程序 |
-
-> 当列表内容超出屏幕时，会自动滚屏保持光标可见
+| `n` / `N` | 查找下一个/上一个匹配 |
 
 ### 操作
 | 按键 | 功能 |
@@ -156,9 +168,9 @@ description: "堡垒机"
 | `e` | 编辑选中会话（打开 `$EDITOR`） |
 | `c` | 重命名会话 |
 | `D` | 删除选中会话（需输入 YES 确认） |
-| `?` | 显示快捷键帮助（任意键退出） |
+| `?` | 显示快捷键帮助 |
 
-> 导入的外部会话（SecureCRT / Xshell / MobaXterm）为只读，不支持编辑、删除和重命名操作。
+> 导入的外部会话（SecureCRT / Xshell / MobaXterm）为只读，不支持编辑、删除和重命名。
 
 ### 目录折叠 (Vim 风格)
 | 按键 | 功能 |
@@ -170,73 +182,132 @@ description: "堡垒机"
 | `C` | 折叠所有目录 |
 
 ### 搜索模式
-按 `/` 进入搜索模式，输入关键词可**实时过滤**会话列表：
+按 `/` 进入搜索模式，输入关键词可实时过滤会话列表：
 
-**搜索时按键：**
 | 按键 | 功能 |
 |------|------|
 | `Enter` | 确认搜索并退出搜索模式 |
-| `Esc` | 取消搜索并**清空**过滤条件 |
-| `Ctrl+c` | 退出搜索模式但**保留**过滤结果 |
-| `Ctrl+u` | 清空当前输入内容（Vim 风格） |
+| `Esc` | 取消搜索并清空过滤条件 |
+| `Ctrl+c` | 退出搜索模式但保留过滤结果 |
+| `Ctrl+u` | 清空当前输入内容 |
 
-**已确认搜索后（普通模式）：**
-| 按键 | 功能 |
-|------|------|
-| `Esc` | 直接清空当前搜索过滤，显示全部会话 |
-
-**搜索结果管理：**
-- 底部状态栏显示 `Filter: '关键词' (匹配数)` 表示当前有过滤
-- 使用 `:noh` 命令可清除过滤恢复显示全部会话
-- 搜索是实时过滤，输入时即时显示匹配结果
+已确认搜索后，按 `Esc` 可清空过滤显示全部会话。
 
 ### 命令模式 (:)
-按 `:` 进入命令模式（类似 Vim 的命令行），支持 Tab 自动补全：
+按 `:` 进入命令模式，支持 Tab 自动补全：
 
 | 命令 | 功能 |
 |------|------|
 | `:q` / `:quit` | 退出程序 |
 | `:noh` / `:nohlsearch` | 清除搜索过滤 |
-| `:pw` | 切换密码明文/隐藏显示（状态栏显示 `[PW]` 标记） |
-| `:<number>` | 跳转到第 n 行（如 `:42` 跳转到第 42 行） |
+| `:pw` / `:password` | 切换密码明文/隐藏显示（状态栏显示 `[PW]` 标记） |
+| `:<number>` | 跳转到第 n 行 |
 
-### 状态栏说明
-TUI 底部状态栏显示当前状态信息：
+### 状态栏
+- **`Session: xxx`** — 当前选中的会话名称
+- **`Total: N`** — 当前可见节点总数
+- **`Filter: 'xxx' (N)`** — 搜索过滤状态
+- **`[PW]`** — 密码明文显示已开启
 
-- **`Session: xxx`** — 当前选中的会话名称（仅当选中会话时显示）
-- **`Total: N`** — 当前可见节点总数（会话+目录）
-- **`Filter: 'xxx' (N)`** — 搜索过滤状态（仅当有过滤时显示）
-- **`[PW]`** — 密码明文显示已开启（通过 `:pw` 切换）
-- **`Press ? for help, :q or Ctrl+c to quit`** — 操作提示
+## xftp TUI 快捷键
+
+### 会话选择器
+xftp 启动时先进入会话选择器，快捷键与 xssh TUI 相同（导航、搜索、命令模式、`:pw` 切换密码显示等）。选中会话后按 `Enter` 连接并进入文件管理界面。
+
+连接失败时会显示错误信息，按任意键返回会话列表。
+
+### 文件管理 - 导航
+| 按键 | 功能 |
+|------|------|
+| `↑/k` | 向上移动 |
+| `↓/j` | 向下移动 |
+| `PgUp/Ctrl+b` | 向上整页翻页 |
+| `PgDn/Ctrl+f` | 向下整页翻页 |
+| `Ctrl+u` | 向上半页翻页 |
+| `Ctrl+d` | 向下半页翻页 |
+| `Home/g` | 跳转到第一行 |
+| `End/G` | 跳转到最后行 |
+| `Tab` | 切换本地/远程面板 |
+| `Enter` | 进入目录 |
+| `Backspace` | 返回上级目录 |
+
+### 文件管理 - 文件操作
+| 按键 | 功能 |
+|------|------|
+| `Space` | 多选/取消选择 |
+| `y` | 标记文件到传输缓冲区（yank） |
+| `p` | 粘贴/传输到对侧面板（paste） |
+| `D` | 删除选中文件（需确认） |
+| `r` | 重命名文件 |
+| `m` | 创建目录 |
+
+### 文件管理 - 命令与搜索
+| 按键 | 功能 |
+|------|------|
+| `/` | 搜索/过滤当前面板文件 |
+| `:` | 进入命令模式 |
+| `?` | 显示帮助 |
+| `Ctrl+c` | 退出程序 |
+
+### 文件管理 - 命令模式
+| 命令 | 功能 |
+|------|------|
+| `:q` / `:quit` | 返回会话选择器（非退出程序） |
+| `:reconnect` | 重新连接远程服务器 |
+
+### 文件传输行为
+- **Yank → Paste 流程**：先在源面板用 `y` 标记文件，切换到目标面板用 `p` 粘贴
+- **多选传输**：用 `Space` 多选后再 `y` 标记，可批量传输
+- **覆盖确认**：目标存在同名文件/目录时提示 `y/n` 确认（仅检查第一层，子目录直接覆盖）
+- **传输结果**：传输完成后弹出统计对话框，显示目录数、文件数、总数据量和失败数
 
 ## SSH 连接行为
 
+### xssh 连接方式
 选中会话按 `Enter` 连接时：
-- TUI 进入**暂停模式**，终端恢复到正常状态
+- TUI 进入暂停模式，终端恢复到正常状态
 - 使用 Go 原生 SSH 客户端建立连接，**连接超时 10 秒**
-- SSH 会话中的所有快捷键都能正常使用
 - 自动处理终端窗口大小调整（SIGWINCH）
-- 按 `Ctrl+d` 退出 SSH 或连接断开后，TUI 自动恢复并可以继续操作
+- 按 `Ctrl+d` 退出 SSH 或连接断开后，TUI 自动恢复
 - 连接失败时显示红色边框错误弹窗，按任意键关闭
+
+### xftp 连接方式
+选中会话按 `Enter` 连接时：
+- 异步建立 SFTP 连接，界面显示「正在连接…」
+- 连接成功后自动加载远程目录
+- **连接失败**时显示错误弹窗，按任意键返回会话选择器
+- 使用 `:q` 可断开连接返回会话列表，快速切换不同服务器
 
 ### 多认证方式回退
 
-当会话配置了多种认证方式（常见于 SecureCRT 导入的会话）时，xssh 会按优先级顺序逐一尝试，直到成功或全部失败：
+当会话配置了多种认证方式（常见于 SecureCRT 导入的会话）时，按优先级顺序逐一尝试：
 
 ```
 publickey → password → keyboard-interactive → agent
 ```
 
-如果使用 publickey 认证且未指定密钥文件，会自动在 `~/.ssh/` 下查找默认密钥，按以下顺序尝试：
+如果使用 publickey 认证且未指定密钥文件，会自动在 `~/.ssh/` 下查找默认密钥：
 `id_ed25519` → `id_ecdsa` → `id_ecdsa_sk` → `id_ed25519_sk` → `id_rsa` → `id_dsa`
+
+### 主机密钥验证（TOFU）
+
+xssh/xftp 采用 TOFU（Trust On First Use）安全模型：
+
+- **首次连接未知主机**：自动信任并将主机密钥写入 `known_hosts`
+- **已知主机密钥匹配**：正常连接
+- **已知主机密钥变更**：拒绝连接（可能是中间人攻击），显示警告信息
+
+可通过配置调整行为：
+- `strict_host_key` 未配置或为 `true`（默认）：启用 TOFU 模式
+- `strict_host_key: false`：跳过所有主机密钥验证（适合内网环境）
 
 ## SecureCRT 集成
 
-xssh 支持直接加载 SecureCRT 的会话配置文件（`.ini` 格式），无需手动转换。启用后，SecureCRT 会话在 TUI 中以紫色样式显示在独立的 `[CRT] securecrt/` 目录下，与本地会话并列展示。
+xssh/xftp 支持直接加载 SecureCRT 的会话配置文件（`.ini` 格式），无需手动转换。启用后，SecureCRT 会话以紫色样式显示在 `[CRT] securecrt/` 目录下。
 
-### 第一步：找到 SecureCRT 会话目录
+### 配置方法
 
-SecureCRT 在不同平台的默认会话存储路径：
+找到 SecureCRT 会话目录：
 
 | 平台 | 默认路径 |
 |------|---------|
@@ -244,218 +315,130 @@ SecureCRT 在不同平台的默认会话存储路径：
 | **Linux** | `~/.vandyke/SecureCRT/Config/Sessions` |
 | **Windows** | `%APPDATA%\VanDyke\Config\Sessions` |
 
-你也可以在 SecureCRT 中通过菜单 **Options → Global Options → General → Configuration Paths** 查看实际路径。
-
-### 第二步：配置 xssh
-
-编辑 `~/.xsc/config.yaml`（首次运行 xssh 会自动创建 `~/.xsc/` 目录）：
+编辑 `~/.xsc/config.yaml`：
 
 ```yaml
 securecrt:
-  enabled: true                                    # 启用 SecureCRT 集成
-  session_path: "/home/user/.vandyke/SecureCRT/Config/Sessions"  # SecureCRT 会话目录路径
-  password: "your_master_password"                 # SecureCRT 主密码（用于解密会话中的加密密码）
+  enabled: true
+  session_path: "/home/user/.vandyke/SecureCRT/Config/Sessions"
+  password: "your_master_password"    # SecureCRT 主密码（用于解密加密密码）
 ```
 
-> **关于主密码**：如果你在 SecureCRT 中设置了配置加密密码（Options → Global Options → General → Use config encryption passphrase），需要在这里填入相同的密码。如果没有设置过主密码或不需要解密密码，可以留空，此时会话会以 SSH Agent 方式尝试连接。
+> **关于主密码**：如果你在 SecureCRT 中设置了配置加密密码（Options → Global Options → General → Use config encryption passphrase），需要填入相同的密码。未设置主密码或不需要解密密码时可留空。
 
-### 第三步：启动 TUI
-
-```bash
-xssh tui
-```
-
-启用后，TUI 界面中会多出一个紫色的 `securecrt/` 目录，其中包含你所有的 SecureCRT 会话，保持原有的目录层级结构。
-
-### SecureCRT 会话在 TUI 中的表现
+### TUI 中的表现
 
 | 特性 | 说明 |
 |------|------|
 | 显示样式 | 紫色文字，目录带 `[CRT]` 前缀，会话带 🔒 图标 |
-| 只读模式 | 不支持编辑(e)、删除(D)、重命名(c) 操作 |
-| 密码解密 | 延迟解密 — 仅在光标选中时实时解密当前会话密码，启动不卡顿 |
-| 密码显示 | 默认隐藏，使用 `:pw` 命令切换明文/密文显示 |
-| 多认证方式 | 详情面板显示所有认证方式及优先级顺序 |
-| SSH 连接 | 按 Enter 直接连接，支持多认证方式自动回退 |
+| 只读模式 | 不支持编辑、删除、重命名 |
+| 密码解密 | 延迟解密 — 仅在光标选中时实时解密，启动不卡顿 |
+| 密码显示 | 默认隐藏，`:pw` 切换明文/密文 |
+| 多认证方式 | 详情面板显示所有认证方式及优先级 |
+| SSH 连接 | 按 Enter 直接连接，支持多认证回退 |
 
 ### 支持的认证方式
 
-xssh 能解析 SecureCRT 会话中配置的以下认证方式，并在连接时按配置的优先级顺序尝试：
-
 | 认证方式 | 图标 | 说明 |
 |---------|------|------|
-| Public Key | 🔐 | 使用公钥认证，支持指定密钥文件或自动发现 `~/.ssh/` 下的默认密钥 |
-| Password | 🔑 | 使用加密密码，连接时自动解密 |
+| Public Key | 🔐 | 公钥认证，支持指定密钥或自动发现 `~/.ssh/` 默认密钥 |
+| Password | 🔑 | 加密密码，连接时自动解密 |
 | Keyboard Interactive | ⌨️ | 键盘交互式认证 |
 | GSSAPI | 🎫 | Kerberos/GSSAPI 认证 |
-| SSH Agent | 🔐 | 使用本地 SSH Agent |
+| SSH Agent | 🔐 | 本地 SSH Agent |
 
 ### 密码加密支持
 
-xssh 支持解密 SecureCRT V2 格式的加密密码：
+- **Prefix 02**：SHA256(passphrase) 作为 AES-256-CBC 密钥
+- **Prefix 03**：bcrypt_pbkdf 派生 AES-256-CBC 密钥和 IV
 
-- **Prefix 02**：使用 SHA256(passphrase) 作为 AES-256-CBC 密钥
-- **Prefix 03**：使用 bcrypt_pbkdf 派生 AES-256-CBC 密钥和 IV
+解密后通过 SHA256 校验和验证。V1 格式（SecureCRT 7.3.3 之前）暂不支持。
 
-解密后通过 SHA256 校验和验证密码完整性。V1 格式（SecureCRT 7.3.3 之前版本）暂不支持。
-
-### 永久转换为 xssh 本地格式
-
-如果你希望将 SecureCRT 会话永久转换为 xssh 本地 YAML 格式（不再依赖 SecureCRT 配置文件）：
+### 转换为本地格式
 
 ```bash
 xssh import-securecrt
 ```
 
-转换后的会话保存在 `~/.xsc/sessions/securecrt-converted/YYYYMMDD-HHMMSS/` 目录下，保持原有目录结构。完成后会显示转换统计信息。
+转换后保存在 `~/.xsc/sessions/securecrt-converted/YYYYMMDD-HHMMSS/`。
 
 ## Xshell 集成
 
-xssh 支持直接加载 Xshell 的会话文件（`.xsh` 格式），无需手动转换。启用后，Xshell 会话在 TUI 中以青色样式显示在独立的 `[XSH] xshell/` 目录下，与本地会话和 SecureCRT 会话并列展示。
+支持直接加载 Xshell `.xsh` 会话文件。启用后以青色样式显示在 `[XSH] xshell/` 目录下。
 
-### 第一步：找到 Xshell 会话目录
+### 配置方法
 
-Xshell 的会话文件默认存储路径：
+Xshell 默认会话路径：
 
 | 平台 | 默认路径 |
 |------|---------|
 | **Windows** | `%APPDATA%\NetSarang Computer\6\Xshell\Sessions` |
 | **Windows (旧版)** | `我的文档\NetSarang Computer\6\Xshell\Sessions` |
 
-你也可以在 Xshell 中通过菜单 **工具 → 选项 → 常规** 查看会话文件的实际存储路径。
-
-> 如果你的 Xshell 会话目录在 Windows 上，可以将整个 Sessions 目录拷贝到 Linux/macOS 上，xssh 能正确处理 UTF-16LE 编码的 `.xsh` 文件。
-
-### 第二步：配置 xssh
+> 可将 Windows 上的 Sessions 目录拷贝到 Linux/macOS，xssh 能正确处理 UTF-16LE 编码。
 
 编辑 `~/.xsc/config.yaml`：
 
 ```yaml
 xshell:
-  enabled: true                                      # 启用 Xshell 集成
-  session_path: "/home/user/xshell-sessions"         # Xshell 会话目录路径（包含 .xsh 文件）
-  password: "your_master_password"                   # Xshell 主密码（用于解密会话中的加密密码）
+  enabled: true
+  session_path: "/home/user/xshell-sessions"
+  password: "your_master_password"    # Xshell 主密码
 ```
 
-> **关于主密码**：如果你在 Xshell 中设置了主密码（工具 → 选项 → 安全 → 设置主密码），需要在这里填入相同的密码。如果没有设置过主密码，可以留空，此时有密码的会话将无法解密，会以 SSH Agent 方式尝试连接。
-
-### 第三步：启动 TUI
-
-```bash
-xssh tui
-```
-
-启用后，TUI 界面中会多出一个青色的 `xshell/` 目录，其中包含你所有的 Xshell 会话，保持原有的目录层级结构。
-
-### Xshell 会话在 TUI 中的表现
+### TUI 中的表现
 
 | 特性 | 说明 |
 |------|------|
 | 显示样式 | 青色文字，目录带 `[XSH]` 前缀，会话带 🔒 图标 |
-| 只读模式 | 不支持编辑(e)、删除(D)、重命名(c) 操作 |
-| 密码解密 | 延迟解密 — 仅在光标选中时实时解密当前会话密码 |
-| 密码显示 | 默认隐藏，使用 `:pw` 命令切换明文/密文显示 |
-| SSH 连接 | 按 Enter 直接连接 |
+| 只读模式 | 不支持编辑、删除、重命名 |
+| 密码解密 | 延迟解密，Base64 → SHA256 密钥 → RC4 解密 → SHA256 校验 |
+| 密码显示 | 默认隐藏，`:pw` 切换 |
 
-### Xshell 密码加密
-
-xssh 支持解密 Xshell 使用主密码加密的会话密码：
-
-- 加密格式：Base64 编码的密文 + SHA256 校验和
-- 解密流程：Base64 解码 → SHA256(masterPassword) 生成密钥 → RC4 解密 → SHA256 校验验证
-
-### Xshell 文件格式说明
-
-Xshell 会话文件（`.xsh`）是 INI 格式，通常使用 UTF-16LE 编码（xssh 自动处理编码检测和转换）。主要解析以下段和字段：
-
-```ini
-[CONNECTION]
-Host=192.168.1.100
-Port=22
-
-[CONNECTION:AUTHENTICATION]
-UserName=root
-Password=<base64 encoded encrypted password>
-```
-
-### 永久转换为 xssh 本地格式
-
-如果你希望将 Xshell 会话永久转换为 xssh 本地 YAML 格式：
+### 转换为本地格式
 
 ```bash
 xssh import-xshell
 ```
 
-转换后的会话保存在 `~/.xsc/sessions/xshell-converted/YYYYMMDD-HHMMSS/` 目录下，保持原有目录结构。完成后会显示转换统计信息。
+转换后保存在 `~/.xsc/sessions/xshell-converted/YYYYMMDD-HHMMSS/`。
 
 ## MobaXterm 集成
 
-xssh 支持直接加载 MobaXterm 的配置文件（`MobaXterm.ini`）中的 SSH 书签，无需手动转换。启用后，MobaXterm 会话在 TUI 中以橙色样式显示在独立的 `[MXT] mobaxterm/` 目录下，与本地会话和其他导入会话并列展示。
+支持直接加载 MobaXterm `MobaXterm.ini` 中的 SSH 书签。启用后以橙色样式显示在 `[MXT] mobaxterm/` 目录下。
 
-### 第一步：找到 MobaXterm 配置文件
+### 配置方法
 
-MobaXterm 的配置文件路径取决于安装方式：
+MobaXterm 配置文件路径：
 
-| 安装方式 | 配置文件路径 |
-|---------|------------|
-| **安装版** | `%APPDATA%\MobaXterm\MobaXterm.ini` 或 `C:\Users\<用户名>\AppData\Roaming\MobaXterm\MobaXterm.ini` |
-| **便携版** | 与 `MobaXterm.exe` 同目录下的 `MobaXterm.ini` |
+| 安装方式 | 路径 |
+|---------|------|
+| **安装版** | `%APPDATA%\MobaXterm\MobaXterm.ini` |
+| **便携版** | 与 `MobaXterm.exe` 同目录 |
 
-你也可以在 MobaXterm 中通过菜单 **Settings → Configuration → General** 查看配置文件路径。
-
-> 将 `MobaXterm.ini` 文件拷贝到 Linux/macOS 上即可使用，xssh 能正确处理 Windows-1252 编码。
-
-### 第二步：配置 xssh
+> 将 `MobaXterm.ini` 拷贝到 Linux/macOS 即可使用。
 
 编辑 `~/.xsc/config.yaml`：
 
 ```yaml
 mobaxterm:
-  enabled: true                                      # 启用 MobaXterm 集成
-  session_path: "/home/user/MobaXterm.ini"           # MobaXterm.ini 文件路径
-  password: "your_master_password"                   # MobaXterm 主密码（用于解密 Professional 版加密密码）
+  enabled: true
+  session_path: "/home/user/MobaXterm.ini"
+  password: "your_master_password"    # MobaXterm Professional 版主密码
 ```
 
-> **关于主密码**：MobaXterm Professional 版支持使用主密码加密保存的密码。如果你设置了主密码，需要在这里填入。免费版的加密密码暂不支持解密，此时会话将以 SSH Agent 方式尝试连接。**注意**：MobaXterm 的密码通常保存在 Windows 注册表中（`HKCU\Software\Mobatek\MobaXterm\P`），而非 INI 文件内。如果 INI 文件中不包含密码信息，可以将 `password` 留空。
+> **关于主密码**：仅 Professional 版支持使用主密码加密。MobaXterm 的密码通常保存在 Windows 注册表中（`HKCU\Software\Mobatek\MobaXterm\P`）而非 INI 文件内。免费版加密格式暂不支持。
 
-### 第三步：启动 TUI
-
-```bash
-xssh tui
-```
-
-启用后，TUI 界面中会多出一个橙色的 `mobaxterm/` 目录，其中包含你所有的 MobaXterm SSH 书签，按 `SubRep` 目录层级组织。
-
-### MobaXterm 会话在 TUI 中的表现
+### TUI 中的表现
 
 | 特性 | 说明 |
 |------|------|
 | 显示样式 | 橙色文字，目录带 `[MXT]` 前缀，会话带 🔒 图标 |
-| 只读模式 | 不支持编辑(e)、删除(D)、重命名(c) 操作 |
-| 密码解密 | 延迟解密 — 仅在光标选中时实时解密当前会话密码 |
-| 密码显示 | 默认隐藏，使用 `:pw` 命令切换明文/密文显示 |
-| 会话类型 | 仅导入 SSH 类型（type=0）的书签，自动跳过 RDP、VNC、FTP 等其他类型 |
-| SSH 连接 | 按 Enter 直接连接 |
+| 只读模式 | 不支持编辑、删除、重命名 |
+| 密码解密 | AES-CFB-8 解密（SHA512 密钥派生） |
+| 会话类型 | 仅导入 SSH 类型（type=0），跳过 RDP/VNC/FTP 等 |
 
-### MobaXterm 密码加密
-
-xssh 支持解密 MobaXterm Professional 版使用的 AES-CFB-8 加密格式：
-
-- 密钥派生：SHA512(masterPassword) 取前 32 字节作为 AES-256 密钥
-- IV 生成：AES-ECB 加密 16 字节全零
-- 解密模式：AES-CFB-8（逐字节模式，与标准库 CFB-128 不同）
-
-> 免费版 MobaXterm 使用不同的加密方式（nibble-based），当前暂不支持。遇到免费版加密密码时会自动跳过密码解密，不影响会话导入。
-
-### MobaXterm INI 文件格式说明
-
-MobaXterm 的书签存储在 INI 文件的 `[Bookmarks]` 和 `[Bookmarks_N]` sections 中。每个 section 包含：
-
-- `SubRep=` — 目录路径（用于组织书签层级）
-- `ImgNum=` — 图标编号（xssh 忽略）
-- 会话行格式：`SessionName=type%host%port%username%...#FontSettings%...`
-
-其中 `type=0` 表示 SSH 会话。会话名中的特殊字符使用转义格式：
+### MobaXterm 特殊字符转义
 
 | 转义序列 | 原始字符 |
 |---------|---------|
@@ -465,92 +448,92 @@ MobaXterm 的书签存储在 INI 文件的 `[Bookmarks]` 和 `[Bookmarks_N]` sec
 | `__PIPE__` | `\|` |
 | `__PERCENT__` | `%` |
 
-### 永久转换为 xssh 本地格式
-
-如果你希望将 MobaXterm 会话永久转换为 xssh 本地 YAML 格式：
+### 转换为本地格式
 
 ```bash
 xssh import-mobaxterm
 ```
 
-转换后的会话保存在 `~/.xsc/sessions/mobaxterm-converted/YYYYMMDD-HHMMSS/` 目录下，按原有 SubRep 目录结构组织。完成后会显示转换统计信息。
+转换后保存在 `~/.xsc/sessions/mobaxterm-converted/YYYYMMDD-HHMMSS/`。
 
 ## 全局配置
 
-xssh 的全局配置文件为 `~/.xsc/config.yaml`，完整配置项：
+配置文件：`~/.xsc/config.yaml`（首次运行自动创建 `~/.xsc/` 目录）
 
 ```yaml
-# SecureCRT 集成配置
+# SecureCRT 集成
 securecrt:
-  enabled: false                    # 是否启用 SecureCRT 集成
-  session_path: ""                  # SecureCRT 会话目录路径
-  password: ""                      # SecureCRT 主密码（用于解密加密密码）
+  enabled: false
+  session_path: ""
+  password: ""
 
-# Xshell 集成配置
+# Xshell 集成
 xshell:
-  enabled: false                    # 是否启用 Xshell 集成
-  session_path: ""                  # Xshell 会话目录路径（包含 .xsh 文件）
-  password: ""                      # Xshell 主密码（用于解密加密密码）
+  enabled: false
+  session_path: ""
+  password: ""
 
-# MobaXterm 集成配置
+# MobaXterm 集成
 mobaxterm:
-  enabled: false                    # 是否启用 MobaXterm 集成
-  session_path: ""                  # MobaXterm.ini 文件路径
-  password: ""                      # MobaXterm 主密码（Professional 版，用于 AES-CFB-8 解密）
+  enabled: false
+  session_path: ""
+  password: ""
 
 # SSH 连接配置
 ssh:
-  strict_host_key: false            # 是否启用严格主机密钥验证（默认关闭）
-  known_hosts_file: ""              # 自定义 known_hosts 文件路径
+  strict_host_key: true             # 主机密钥验证（默认 true，启用 TOFU）
+  known_hosts_file: ""              # 自定义 known_hosts 路径
 ```
 
 ### SSH 主机密钥验证
 
-- `strict_host_key: false`（默认）：自动接受所有主机密钥，适合内网环境
-- `strict_host_key: true`：使用 known_hosts 验证主机密钥，首次连接未知主机将拒绝连接
+| 配置值 | 行为 |
+|--------|------|
+| 未配置 / `true` | TOFU 模式：首次连接信任并记录，密钥变更拒绝 |
+| `false` | 跳过验证，适合内网环境 |
 
-known_hosts 文件查找顺序：
-1. 配置中指定的 `known_hosts_file` 路径
-2. `~/.ssh/known_hosts`（标准 SSH 路径）
-3. `~/.xsc/known_hosts`（xssh 自有路径）
+`known_hosts` 文件查找顺序：
+1. 配置中指定的 `known_hosts_file`
+2. `~/.ssh/known_hosts`
+3. `~/.xsc/known_hosts`
 
-> 配置文件权限建议设置为 `0600`（仅用户可读写），避免密码泄露。
+> 配置文件权限建议 `0600`，避免密码泄露。
 
 ## 目录结构
 
 ```
 ~/.xsc/
 ├── config.yaml                    # 全局配置文件
-├── known_hosts                    # 主机密钥文件（启用 strict_host_key 时使用）
+├── known_hosts                    # 主机密钥（TOFU 模式自动写入）
 └── sessions/                      # 本地会话目录
     ├── prod/                      # 按环境分组
     │   └── db/
-    │       ├── master.yaml        # 各个会话配置文件
+    │       ├── master.yaml
     │       └── slave-01.yaml
     ├── staging/
     │   └── web-server.yaml
-    ├── securecrt-converted/       # import-securecrt 转换后的会话
+    ├── securecrt-converted/       # import-securecrt 转换结果
     │   └── 20240101-120000/
-    │       └── ...                # 保持 SecureCRT 原有目录结构
-    ├── xshell-converted/          # import-xshell 转换后的会话
+    ├── xshell-converted/          # import-xshell 转换结果
     │   └── 20240101-120000/
-    │       └── ...                # 保持 Xshell 原有目录结构
-    └── mobaxterm-converted/       # import-mobaxterm 转换后的会话
+    └── mobaxterm-converted/       # import-mobaxterm 转换结果
         └── 20240101-120000/
-            └── ...                # 按 SubRep 目录结构组织
 ```
 
 ## 开发
 
 ```bash
-make build          # 构建到 ./build/xssh
-make run            # 直接运行 TUI 模式
+make build          # 构建 xssh + xftp 到 ./build/
+make build-xftp     # 仅构建 xftp
+make run            # 运行 xssh TUI
+make run-xftp       # 运行 xftp TUI
 make test           # 运行所有测试：go test -v ./...
 make fmt            # 格式化代码：go fmt ./...
 make vet            # 静态分析：go vet ./...
 make deps           # 下载并整理依赖
 make clean          # 清理构建产物
-make uninstall      # 从系统卸载
+make install        # 安装到 /usr/local/bin（xssh + xftp）
+make uninstall      # 卸载
 ```
 
 运行指定测试：
