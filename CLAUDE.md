@@ -63,6 +63,20 @@ Full quality check: `make fmt && make vet && make test`
 
 **Public package**: `pkg/config/` — global config singleton loaded from `~/.xsc/config.yaml`. Manages paths and settings for SecureCRT/Xshell/MobaXterm integration and SSH host key verification. `SSHConfig.StrictHostKey` is `*bool` — nil defaults to true (TOFU enabled).
 
+## Test Coverage
+
+Key test files:
+- `internal/ssh/client_test.go` — SSH config building, host key callback, agent key listing
+- `internal/xftp/selector_test.go` — selector creation, command matching/completion, password toggle, node rendering, cursor movement, search
+- `internal/xftp/filepanel_test.go` — cursor movement, page scrolling (half/full), selection, filtering, formatting helpers
+- `internal/xftp/operations_test.go` — yank/paste operations
+- `internal/xftp/transfer_test.go` — transfer manager stats tracking
+- `internal/securecrt/` — parser and password decryption (V2 prefix 02/03)
+- `internal/xshell/` — parser and RC4 password decryption
+- `internal/mobaxterm/` — parser and AES-CFB-8 password decryption
+- `internal/tui/tui_test.go` — TUI model initialization
+- `pkg/config/config_test.go` — config load/save, directory paths, known_hosts
+
 ## Code Conventions
 
 - **Language**: Go 1.21+. Documentation and code comments are written in Chinese.
