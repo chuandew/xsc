@@ -8,8 +8,9 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	internalssh "github.com/ketor/xsc/internal/ssh"
 	"github.com/ketor/xsc/internal/session"
+	"github.com/ketor/xsc/internal/shared"
+	internalssh "github.com/ketor/xsc/internal/ssh"
 )
 
 // 样式定义
@@ -119,12 +120,8 @@ var (
 				Padding(1, 2)
 )
 
-// Command 定义一个 : 模式下的命令
-type Command struct {
-	Name        string   // 主命令名, e.g. "q"
-	Aliases     []string // 别名, e.g. ["quit"]
-	Description string   // 中文描述
-}
+// Command 是 shared.Command 的类型别名，保持向后兼容
+type Command = shared.Command
 
 // commands 是所有 : 命令的注册表（单一数据源）
 var commands = []Command{

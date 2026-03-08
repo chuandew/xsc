@@ -10,54 +10,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ketor/xsc/internal/session"
+	"github.com/ketor/xsc/internal/shared"
 	internalssh "github.com/ketor/xsc/internal/ssh"
-	"github.com/ketor/xsc/pkg/config"
 )
 
 // loadSessions 加载会话
 func (m *Model) loadSessions() tea.Cmd {
 	return func() tea.Msg {
-		sessionsDir, err := config.GetSessionsDir()
-		if err != nil {
-			return sessionsLoadedMsg{tree: nil}
-		}
-
-		tree, err := session.LoadSessionsTree(sessionsDir)
-		if err != nil {
-			return sessionsLoadedMsg{tree: nil}
-		}
-
-		// 加载全局配置
-		globalConfig, err := config.LoadGlobalConfig()
-		if err != nil {
-			return sessionsLoadedMsg{tree: tree, sessionsDir: sessionsDir}
-		}
-
-		// 如果启用了 SecureCRT，加载 SecureCRT 会话
-		if globalConfig.SecureCRT.Enabled {
-			scTree, err := session.LoadSecureCRTSessions(globalConfig.SecureCRT)
-			if err == nil && scTree != nil {
-				// 将 SecureCRT 会话作为子树添加到本地会话树
-				tree.Children = append(tree.Children, scTree)
-			}
-		}
-
-		// 如果启用了 XShell，加载 XShell 会话
-		if globalConfig.XShell.Enabled {
-			xsTree, err := session.LoadXShellSessions(globalConfig.XShell)
-			if err == nil && xsTree != nil {
-				tree.Children = append(tree.Children, xsTree)
-			}
-		}
-
-		// 如果启用了 MobaXterm，加载 MobaXterm 会话
-		if globalConfig.MobaXterm.Enabled {
-			mxTree, err := session.LoadMobaXtermSessions(globalConfig.MobaXterm)
-			if err == nil && mxTree != nil {
-				tree.Children = append(tree.Children, mxTree)
-			}
-		}
-
+		tree, sessionsDir := shared.LoadSessionTree()
 		return sessionsLoadedMsg{tree: tree, sessionsDir: sessionsDir}
 	}
 }
@@ -406,22 +366,12 @@ func (m Model) getVisibleNodes() []*session.SessionNode {
 
 // expandAll 展开所有目录
 func (m Model) expandAll(node *session.SessionNode) {
-	if node.IsDir {
-		node.Expanded = true
-		for _, child := range node.Children {
-			m.expandAll(child)
-		}
-	}
+	shared.ExpandAll(node)
 }
 
 // collapseAll 折叠所有目录
 func (m Model) collapseAll(node *session.SessionNode) {
-	if node.IsDir {
-		node.Expanded = false
-		for _, child := range node.Children {
-			m.collapseAll(child)
-		}
-	}
+	shared.CollapseAll(node)
 }
 
 // searchNext 查找下一个/上一个匹配项
@@ -458,36 +408,10 @@ func (m *Model) searchNext(direction int) {
 
 // matchCommand 根据输入返回匹配的命令规范名，无匹配返回空字符串
 func matchCommand(input string) string {
-	for _, cmd := range commands {
-		if input == cmd.Name {
-			return cmd.Name
-		}
-		for _, alias := range cmd.Aliases {
-			if input == alias {
-				return cmd.Name
-			}
-		}
-	}
-	return ""
+	return shared.MatchCommand(input, commands)
 }
 
 // getCommandCompletions 根据前缀返回匹配的命令列表
 func getCommandCompletions(prefix string) []Command {
-	if prefix == "" {
-		return commands
-	}
-	var result []Command
-	for _, cmd := range commands {
-		if strings.HasPrefix(cmd.Name, prefix) {
-			result = append(result, cmd)
-			continue
-		}
-		for _, alias := range cmd.Aliases {
-			if strings.HasPrefix(alias, prefix) {
-				result = append(result, cmd)
-				break
-			}
-		}
-	}
-	return result
+	return shared.GetCommandCompletions(prefix, commands)
 }

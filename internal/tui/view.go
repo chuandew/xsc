@@ -8,6 +8,7 @@ import (
 	"github.com/ketor/xsc/internal/mobaxterm"
 	"github.com/ketor/xsc/internal/securecrt"
 	"github.com/ketor/xsc/internal/session"
+	"github.com/ketor/xsc/internal/shared"
 	internalssh "github.com/ketor/xsc/internal/ssh"
 	"github.com/ketor/xsc/internal/xshell"
 )
@@ -189,13 +190,7 @@ func (m Model) renderNode(node *session.SessionNode, selected bool) string {
 
 // getIndent 获取节点的缩进
 func (m Model) getIndent(node *session.SessionNode) string {
-	depth := 0
-	current := node
-	for current.Parent != nil {
-		depth++
-		current = current.Parent
-	}
-	return strings.Repeat("  ", depth)
+	return shared.GetIndent(node)
 }
 
 // renderDetail 渲染详情视图

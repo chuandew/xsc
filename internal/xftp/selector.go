@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ketor/xsc/internal/session"
-	"github.com/ketor/xsc/pkg/config"
+	"github.com/ketor/xsc/internal/shared"
 )
 
 // SessionSelectedMsg 用户选择了一个 session
@@ -24,12 +24,8 @@ type sessionsLoadedMsg struct {
 	sessionsDir string
 }
 
-// selectorCommand 定义一个 : 模式下的命令
-type selectorCommand struct {
-	Name        string   // 主命令名
-	Aliases     []string // 别名
-	Description string   // 中文描述
-}
+// selectorCommand 是 shared.Command 的类型别名，保持向后兼容
+type selectorCommand = shared.Command
 
 // selectorCommands 是选择器所有 : 命令的注册表
 var selectorCommands = []selectorCommand{
@@ -100,39 +96,7 @@ func (s Selector) Init() tea.Cmd {
 // loadSessions 异步加载所有 session
 func (s Selector) loadSessions() tea.Cmd {
 	return func() tea.Msg {
-		sessionsDir, err := config.GetSessionsDir()
-		if err != nil {
-			return sessionsLoadedMsg{tree: nil}
-		}
-
-		tree, err := session.LoadSessionsTree(sessionsDir)
-		if err != nil {
-			return sessionsLoadedMsg{tree: nil}
-		}
-
-		// 加载全局配置，添加外部 session 源
-		globalConfig, err := config.LoadGlobalConfig()
-		if err == nil {
-			if globalConfig.SecureCRT.Enabled {
-				scTree, err := session.LoadSecureCRTSessions(globalConfig.SecureCRT)
-				if err == nil && scTree != nil {
-					tree.Children = append(tree.Children, scTree)
-				}
-			}
-			if globalConfig.XShell.Enabled {
-				xsTree, err := session.LoadXShellSessions(globalConfig.XShell)
-				if err == nil && xsTree != nil {
-					tree.Children = append(tree.Children, xsTree)
-				}
-			}
-			if globalConfig.MobaXterm.Enabled {
-				mxTree, err := session.LoadMobaXtermSessions(globalConfig.MobaXterm)
-				if err == nil && mxTree != nil {
-					tree.Children = append(tree.Children, mxTree)
-				}
-			}
-		}
-
+		tree, sessionsDir := shared.LoadSessionTree()
 		return sessionsLoadedMsg{tree: tree, sessionsDir: sessionsDir}
 	}
 }
@@ -962,33 +926,17 @@ func (s *Selector) viewHeight() int {
 
 // getIndent 获取节点缩进
 func (s Selector) getIndent(node *session.SessionNode) string {
-	depth := 0
-	current := node
-	for current.Parent != nil {
-		depth++
-		current = current.Parent
-	}
-	return strings.Repeat("  ", depth)
+	return shared.GetIndent(node)
 }
 
 // expandAll 展开所有目录
 func (s *Selector) expandAll(node *session.SessionNode) {
-	if node.IsDir {
-		node.Expanded = true
-		for _, child := range node.Children {
-			s.expandAll(child)
-		}
-	}
+	shared.ExpandAll(node)
 }
 
 // collapseAll 折叠所有目录
 func (s *Selector) collapseAll(node *session.SessionNode) {
-	if node.IsDir {
-		node.Expanded = false
-		for _, child := range node.Children {
-			s.collapseAll(child)
-		}
-	}
+	shared.CollapseAll(node)
 }
 
 // searchNext 查找下一个/上一个匹配项（在过滤后的节点中循环搜索）
@@ -1115,38 +1063,12 @@ func (s Selector) renderHelp(width, height int) string {
 
 // matchSelectorCommand 根据输入返回匹配的命令规范名
 func matchSelectorCommand(input string) string {
-	for _, cmd := range selectorCommands {
-		if input == cmd.Name {
-			return cmd.Name
-		}
-		for _, alias := range cmd.Aliases {
-			if input == alias {
-				return cmd.Name
-			}
-		}
-	}
-	return ""
+	return shared.MatchCommand(input, selectorCommands)
 }
 
 // getSelectorCommandCompletions 根据前缀返回匹配的命令列表
 func getSelectorCommandCompletions(prefix string) []selectorCommand {
-	if prefix == "" {
-		return selectorCommands
-	}
-	var result []selectorCommand
-	for _, cmd := range selectorCommands {
-		if strings.HasPrefix(cmd.Name, prefix) {
-			result = append(result, cmd)
-			continue
-		}
-		for _, alias := range cmd.Aliases {
-			if strings.HasPrefix(alias, prefix) {
-				result = append(result, cmd)
-				break
-			}
-		}
-	}
-	return result
+	return shared.GetCommandCompletions(prefix, selectorCommands)
 }
 
 // hasPasswordAuth 检查 session 的 AuthMethods 中是否包含密码认证
@@ -1161,15 +1083,7 @@ func (s Selector) hasPasswordAuth(sess *session.Session) bool {
 
 // countSessions 统计叶子节点数量
 func (s *Selector) countSessions(node *session.SessionNode) int {
-	count := 0
-	for _, child := range node.Children {
-		if child.IsDir {
-			count += s.countSessions(child)
-		} else {
-			count++
-		}
-	}
-	return count
+	return shared.CountSessions(node)
 }
 
 // SetSize 设置尺寸（View 方法用参数传递，这里保留供外部调用）
