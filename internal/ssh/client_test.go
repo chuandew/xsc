@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/user/xsc/internal/session"
+	"github.com/ketor/xsc/internal/session"
 )
 
 // TestDialInvalidSession 测试无效 session 返回错误

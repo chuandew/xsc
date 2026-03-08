@@ -9,8 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/user/xsc/internal/session"
-	"github.com/user/xsc/pkg/config"
+	"github.com/ketor/xsc/internal/session"
+	"github.com/ketor/xsc/pkg/config"
 )
 
 // SessionSelectedMsg 用户选择了一个 session

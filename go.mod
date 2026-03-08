@@ -1,4 +1,4 @@
-module github.com/user/xsc
+module github.com/ketor/xsc
 
 go 1.23.0
 

@@ -334,7 +334,7 @@ func doDownload(ctx context.Context, src, dest string, client *sftp.Client, task
 
 	// 确保本地目录存在
 	destDir := filepath.Dir(dest)
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0700); err != nil {
 		return fmt.Errorf("创建本地目录失败: %w", err)
 	}
 

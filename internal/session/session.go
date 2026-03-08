@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/user/xsc/internal/mobaxterm"
-	"github.com/user/xsc/internal/securecrt"
-	"github.com/user/xsc/internal/xshell"
+	"github.com/ketor/xsc/internal/mobaxterm"
+	"github.com/ketor/xsc/internal/securecrt"
+	"github.com/ketor/xsc/internal/xshell"
 	"gopkg.in/yaml.v3"
 )
 

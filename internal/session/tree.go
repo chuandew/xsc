@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/user/xsc/internal/mobaxterm"
-	"github.com/user/xsc/internal/securecrt"
-	"github.com/user/xsc/internal/xshell"
-	"github.com/user/xsc/pkg/config"
+	"github.com/ketor/xsc/internal/mobaxterm"
+	"github.com/ketor/xsc/internal/securecrt"
+	"github.com/ketor/xsc/internal/xshell"
+	"github.com/ketor/xsc/pkg/config"
 )
 
 // LoadAllSessions 递归加载目录中的所有会话文件
@@ -316,6 +316,10 @@ func convertSessionData(sessionData map[string]interface{}, passwordSource, mast
 
 	return s
 }
+
+// LoadSecureCRTSessions / LoadMobaXtermSessions / LoadXShellSessions 结构相似，
+// 但各自有不同的配置类型、解析逻辑和特殊处理（如 SecureCRT 的多认证方法），
+// 因此不做合并重构。
 
 // LoadSecureCRTSessions 加载 SecureCRT 会话
 func LoadSecureCRTSessions(cfg config.SecureCRTConfig) (*SessionNode, error) {
