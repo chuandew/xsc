@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/user/xsc/internal/mobaxterm"
-	"github.com/user/xsc/internal/securecrt"
-	"github.com/user/xsc/internal/session"
-	"github.com/user/xsc/internal/xshell"
-	"github.com/user/xsc/pkg/config"
+	"github.com/ketor/xsc/internal/mobaxterm"
+	"github.com/ketor/xsc/internal/securecrt"
+	"github.com/ketor/xsc/internal/session"
+	"github.com/ketor/xsc/internal/xshell"
+	"github.com/ketor/xsc/pkg/config"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -120,6 +120,7 @@ func startKeepalive(ctx context.Context, client *ssh.Client) {
 		case <-ticker.C:
 			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
 			if err != nil {
+				// 尽力而为的心跳机制：连接断开时静默退出，由上层处理连接生命周期
 				return
 			}
 		}
@@ -314,12 +315,15 @@ func getHostKeyCallback() ssh.HostKeyCallback {
 func appendHostKey(knownHostsPath string, remote net.Addr, key ssh.PublicKey) {
 	f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "警告: 无法打开 known_hosts 文件 %s: %v\n", knownHostsPath, err)
 		return
 	}
 	defer f.Close()
 
 	line := knownhosts.Line([]string{knownhosts.Normalize(remote.String())}, key)
-	fmt.Fprintf(f, "%s\n", line)
+	if _, err := fmt.Fprintf(f, "%s\n", line); err != nil {
+		fmt.Fprintf(os.Stderr, "警告: 无法写入 known_hosts 文件 %s: %v\n", knownHostsPath, err)
+	}
 }
 
 // getSSHConfig 根据认证类型获取 SSH 客户端配置

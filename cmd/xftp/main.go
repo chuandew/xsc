@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/user/xsc/internal/session"
-	"github.com/user/xsc/internal/xftp"
-	"github.com/user/xsc/pkg/config"
+	"github.com/ketor/xsc/internal/session"
+	"github.com/ketor/xsc/internal/xftp"
+	"github.com/ketor/xsc/pkg/config"
 )
 
 func main() {

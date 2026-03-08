@@ -10,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/user/xsc/internal/session"
+	"github.com/ketor/xsc/internal/session"
 )
 
 // Mode TUI 模式
@@ -261,6 +261,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errorDismissMsg:
 		// 3 秒后自动清除错误状态
+		// 已知局限：简单的定时器方案可能清除后续无关的 statusMsg，
+		// 但对于当前使用场景已经够用，暂不引入更复杂的消息序列号机制
 		if m.err != nil {
 			m.err = nil
 			m.statusMsg = ""

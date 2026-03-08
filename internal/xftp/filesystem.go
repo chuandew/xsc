@@ -13,8 +13,8 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/user/xsc/internal/session"
-	internalssh "github.com/user/xsc/internal/ssh"
+	"github.com/ketor/xsc/internal/session"
+	internalssh "github.com/ketor/xsc/internal/ssh"
 )
 
 // FileInfo 文件信息

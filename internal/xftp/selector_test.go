@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/user/xsc/internal/session"
+	"github.com/ketor/xsc/internal/session"
 )
 
 // TestNewSelector 测试创建选择器

@@ -14,12 +14,12 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/user/xsc/internal/mobaxterm"
-	"github.com/user/xsc/internal/securecrt"
-	"github.com/user/xsc/internal/session"
-	internalssh "github.com/user/xsc/internal/ssh"
-	"github.com/user/xsc/internal/xshell"
-	"github.com/user/xsc/pkg/config"
+	"github.com/ketor/xsc/internal/mobaxterm"
+	"github.com/ketor/xsc/internal/securecrt"
+	"github.com/ketor/xsc/internal/session"
+	internalssh "github.com/ketor/xsc/internal/ssh"
+	"github.com/ketor/xsc/internal/xshell"
+	"github.com/ketor/xsc/pkg/config"
 )
 
 // 样式定义

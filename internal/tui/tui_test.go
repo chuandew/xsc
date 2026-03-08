@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/user/xsc/internal/session"
+	"github.com/ketor/xsc/internal/session"
 )
 
 // TestShowPasswordDefaultFalse 测试 showPassword 默认值为 false
